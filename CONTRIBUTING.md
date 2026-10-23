@@ -45,9 +45,27 @@ By making a contribution to this project, I certify that:
 - Pull requests reference the backlog item and requirement IDs: `Closes NUX-15 · INV-1, INV-2`.
 - Run `make lint` and `make test` before opening a pull request.
 
+## What CI checks
+
+Every pull request must pass these jobs (`.github/workflows/ci.yml`) before it can merge:
+
+| Job                 | Checks                                                                          |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `build-test`        | `go build`, `go vet`, `go test -race` (includes the licence-boundary test)      |
+| `lint`              | golangci-lint: staticcheck, gosec, errcheck, revive, gofumpt                    |
+| `govulncheck`       | Known vulnerabilities in dependencies and the standard library (`make vuln`)    |
+| `semgrep`           | Semgrep static analysis                                                         |
+| `licences`          | `reuse lint` and the dependency licence allowlist (`make licences`)             |
+| `dependency-review` | New dependencies: high-severity advisories and disallowed licences              |
+| `dco`               | `Signed-off-by` on every commit                                                 |
+
+`main` is protected: changes land only through a pull request that passes these jobs and is approved by a code owner (`.github/CODEOWNERS`).
+
 ## Licensing rules
 
+<!-- REUSE-IgnoreStart -->
 - Every new source file starts with an SPDX header: `// SPDX-License-Identifier: AGPL-3.0-only` for `cmd/nuxd/`, `internal/server/` and `web/`, or `// SPDX-License-Identifier: Apache-2.0` for everything else.
+<!-- REUSE-IgnoreEnd -->
 - Apache-2.0 code must never import `internal/server/` or `cmd/nuxd/`. `test/boundary` enforces this.
 - Each new direct dependency needs a stated reason in the pull request and an AGPL-compatible licence. Prefer the standard library.
 

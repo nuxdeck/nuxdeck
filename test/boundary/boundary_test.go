@@ -48,7 +48,9 @@ func checkFile(rel string, src []byte) error {
 	}
 
 	want := expectedLicence(rel)
+	// REUSE-IgnoreStart
 	header := "// SPDX-License-Identifier: " + want
+	// REUSE-IgnoreEnd
 	if first, _, _ := strings.Cut(string(src), "\n"); strings.TrimSpace(first) != header {
 		return fmt.Errorf("%s: first line must be %q", rel, header)
 	}
@@ -82,6 +84,7 @@ func firstLines(src []byte, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// REUSE-IgnoreStart
 func TestCheckFile(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -111,6 +114,8 @@ func TestCheckFile(t *testing.T) {
 		})
 	}
 }
+
+// REUSE-IgnoreEnd
 
 func TestRepositoryFiles(t *testing.T) {
 	root, err := os.OpenRoot(filepath.Join("..", ".."))
