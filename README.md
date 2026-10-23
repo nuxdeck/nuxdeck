@@ -13,6 +13,7 @@ It ships as two Go binaries: `nuxd` (server, web UI embedded) and `nux` (agent, 
 | `cmd/nuxd/`, `internal/server/`     | Server                                    | AGPL-3.0   |
 | `web/`                              | Svelte 5 + TypeScript UI                  | AGPL-3.0   |
 | `cmd/nux/`, `internal/agent/`       | Agent and CLI                             | Apache-2.0 |
+| `internal/errcode/`                 | Error codes shared by server and agent    | Apache-2.0 |
 | `proto/`, `pkg/`                    | Agent protocol, generated Go client       | Apache-2.0 |
 | `deploy/`, `test/`                  | systemd units, Dockerfiles, e2e tests     | Apache-2.0 |
 | `docs/`                             | Planning documents (vision to roadmap)    | see `REUSE.toml` |
