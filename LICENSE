@@ -1,0 +1,8 @@
+Nux Deck is licensed per directory (see ADR-006):
+
+  AGPL-3.0-only  cmd/nuxd, internal/server, web
+  Apache-2.0     cmd/nux, internal/agent, proto, pkg, deploy, test
+
+Each directory carries its own LICENSE file; the full texts are in LICENSES/.
+Documentation and repository metadata are provisionally Apache-2.0 (REUSE.toml).
+CODE_OF_CONDUCT.md is CC-BY-SA-4.0.
