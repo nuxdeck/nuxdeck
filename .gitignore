@@ -1,3 +1,13 @@
 .cogmemory
 docs
 CLAUDE.md
+
+/bin/
+/dist/
+/web/node_modules/
+/web/dist/
+/data/
+.env
+.env.*
+*.key
+*.pem
