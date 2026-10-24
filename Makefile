@@ -1,4 +1,4 @@
-.PHONY: lint test build vuln licences dev dev-agent proto api e2e release-snapshot
+.PHONY: lint test build vuln licences release-check dev dev-agent proto api e2e release-snapshot
 
 lint:
 	golangci-lint run ./...
@@ -31,5 +31,8 @@ e2e:
 	@echo "make e2e: not implemented yet (NUX-44)" >&2; exit 1
 
 release-snapshot:
-	@echo "make release-snapshot: not implemented yet (NUX-4)" >&2; exit 1
+	go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=sign
+
+release-check:
+	go run github.com/goreleaser/goreleaser/v2@v2.19.0 check
 

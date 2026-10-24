@@ -1,0 +1,127 @@
+name: release
+
+# Every merge to main publishes the next v0.1.0-alpha.N. The gates already ran
+# on staging (staging.yml); this workflow only builds, signs, attests and pushes.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main
+  ISSUER: https://token.actions.githubusercontent.com
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Require entry points
+        run: deploy/release/has-mains.sh || { echo "::error::cmd/nuxd and cmd/nux need main packages (NUX-5, NUX-6) before a release can be built"; exit 1; }
+      - name: Choose version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(git tag --points-at HEAD --list 'v*' | head -n1)
+          if [ -z "$tag" ]; then
+            tag=$(deploy/release/next-version.sh)
+            git tag "$tag"
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" >/dev/null
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.55.0
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Resolve image digests
+        id: digests
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          for image in nuxd nux-agent; do
+            digest=$(docker buildx imagetools inspect "ghcr.io/nuxdeck/$image:$TAG" --format '{{.Manifest.Digest}}')
+            echo "${image//-/_}=$digest" >> "$GITHUB_OUTPUT"
+          done
+      - name: Verify our own signatures
+        env:
+          NUXD: ${{ steps.digests.outputs.nuxd }}
+          AGENT: ${{ steps.digests.outputs.nux_agent }}
+        run: |
+          cosign verify-blob dist/checksums.txt --bundle dist/checksums.txt.sigstore.json \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+          cosign verify "ghcr.io/nuxdeck/nuxd@$NUXD" \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
+          cosign verify "ghcr.io/nuxdeck/nux-agent@$AGENT" \
+            --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
+      - name: Provenance for release archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+          create-storage-record: false
+      - name: Provenance for nuxd image
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/nuxdeck/nuxd
+          subject-digest: ${{ steps.digests.outputs.nuxd }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Provenance for nux-agent image
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/nuxdeck/nux-agent
+          subject-digest: ${{ steps.digests.outputs.nux_agent }}
+          push-to-registry: true
+          create-storage-record: false
+      # Runs after publishing, so a finding marks the release failed but cannot unpublish it.
+      - name: Trivy scan published nuxd
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/nuxdeck/nuxd@${{ steps.digests.outputs.nuxd }}
+          version: v0.76.1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Trivy scan published nux-agent
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/nuxdeck/nux-agent@${{ steps.digests.outputs.nux_agent }}
+          version: v0.76.1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
