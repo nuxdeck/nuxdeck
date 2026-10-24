@@ -93,11 +93,16 @@ jobs:
           version: v2.19.0
           args: build --snapshot --clean
       # Hashes live outside the workspace: an untracked file would mark the second
-      # build's VCS stamp as dirty and make the binaries differ.
-      - name: Hash, rebuild, compare
+      # build's VCS stamp as dirty and make the binaries differ. The action does not
+      # put goreleaser on PATH, so the rebuild runs through the action as well.
+      - name: Hash first build
+        run: (cd dist && find . -type f \( -name nuxd -o -name nux \) -exec sha256sum {} + | sort -k2) > "$RUNNER_TEMP/first.txt"
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: build --snapshot --clean
+      - name: Compare second build
         run: |
-          hashes() { (cd dist && find . -type f \( -name nuxd -o -name nux \) -exec sha256sum {} + | sort -k2); }
-          hashes > "$RUNNER_TEMP/first.txt"
-          goreleaser build --snapshot --clean
-          hashes > "$RUNNER_TEMP/second.txt"
+          (cd dist && find . -type f \( -name nuxd -o -name nux \) -exec sha256sum {} + | sort -k2) > "$RUNNER_TEMP/second.txt"
           diff -u "$RUNNER_TEMP/first.txt" "$RUNNER_TEMP/second.txt" && echo "builds are reproducible"
