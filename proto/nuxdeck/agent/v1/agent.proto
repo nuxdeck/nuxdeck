@@ -1,0 +1,377 @@
+// SPDX-License-Identifier: Apache-2.0
+
+// Agent protocol v1. Agents dial out to nuxd's gateway (port 8444) and keep one
+// long-lived bidirectional stream (Connect) over mutual TLS; every server
+// request, such as opening a log tail or running a check, travels down it.
+//
+// Compatibility rules: add fields and messages freely; never renumber, retype
+// or reuse a field number. Receivers ignore unknown fields and unknown oneof
+// cases, so newer and older agents and servers keep talking. Field numbers 100
+// to 199 in both envelopes are reserved for v0.2 actions. The agent is
+// read-only in v0.1 (ADR-010); nothing here may ask it to change a host.
+syntax = "proto3";
+
+package nuxdeck.agent.v1;
+
+option go_package = "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1;agentv1";
+
+service AgentGateway {
+  // Enroll trades a single-use token and a CSR for an agent certificate. It is
+  // plain TLS: the server is verified by the CA fingerprint carried in the
+  // token, and no client certificate exists yet.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+
+  // Connect is the agent's one long-lived stream, authenticated by mutual TLS.
+  // The first AgentMessage must be Hello. Messages over 4 MB are rejected
+  // (GW-STR-002); metric batches are split to stay under 1 MB.
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// ---- Enrolment -------------------------------------------------------------
+
+message EnrollRequest {
+  // Single-use enrolment secret. Never logged.
+  string token = 1;
+  // PKCS#10 certificate signing request; the private key never leaves the host.
+  bytes csr_der = 2;
+  string agent_version = 3;
+  string hostname = 4;
+  string os = 5;
+  string arch = 6;
+}
+
+message EnrollResponse {
+  string agent_id = 1;
+  // Agent certificate, valid 24 hours.
+  bytes cert_der = 2;
+  bytes ca_cert_der = 3;
+  // Unix seconds after which the agent should renew (about 16 hours after issue).
+  int64 renew_after_unix = 4;
+}
+
+// ---- Agent to server -------------------------------------------------------
+
+message AgentMessage {
+  oneof body {
+    // First message on every connection.
+    Hello hello = 1;
+    // Every 10 seconds; three missed heartbeats mark the host offline.
+    Heartbeat heartbeat = 2;
+    // Full host and container state after every (re)connect.
+    InventorySnapshot snapshot = 3;
+    // A change since the last snapshot.
+    InventoryEvent event = 4;
+    // Samples since the last batch, or the replayed local buffer.
+    MetricBatch metrics = 5;
+    // Lines for an open log stream.
+    LogChunk log_chunk = 6;
+    LogStreamEnded log_ended = 7;
+    CheckResult check_result = 8;
+    // New CSR before the certificate expires.
+    RenewRequest renew = 9;
+    // The agent could not satisfy a server request.
+    RequestError error = 10;
+  }
+  // v0.2 action results.
+  reserved 100 to 199;
+}
+
+message Hello {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  string hostname = 3;
+  string os = 4;
+  string arch = 5;
+  // Optional features the agent advertises, for example "logs.journal". v0.2
+  // actions will be advertised here, per type, and only when the host opted in.
+  repeated string capabilities = 6;
+}
+
+message Heartbeat {
+  int64 sent_at_unix_ms = 1;
+  AgentStats stats = 2;
+}
+
+// AgentStats lets nuxd flag unhealthy agents (self-reporting).
+message AgentStats {
+  uint64 memory_bytes = 1;
+  float cpu_percent = 2;
+  repeated CollectorError collector_errors = 3;
+}
+
+message CollectorError {
+  string collector = 1;
+  // Stable error code such as AGT-COL-001; never free text or stack traces.
+  string code = 2;
+  int64 at_unix_ms = 3;
+}
+
+message InventorySnapshot {
+  HostFacts host = 1;
+  repeated Container containers = 2;
+  int64 taken_at_unix_ms = 3;
+}
+
+message HostFacts {
+  string hostname = 1;
+  string os = 2;
+  string distro = 3;
+  string kernel = 4;
+  string arch = 5;
+  uint32 cpu_count = 6;
+  uint64 memory_bytes = 7;
+  // Further facts that do not warrant a field yet.
+  map<string, string> facts = 8;
+}
+
+enum Runtime {
+  RUNTIME_UNSPECIFIED = 0;
+  RUNTIME_DOCKER = 1;
+  RUNTIME_PODMAN = 2;
+}
+
+message Container {
+  Runtime runtime = 1;
+  // The runtime's own container ID.
+  string runtime_id = 2;
+  string name = 3;
+  string image = 4;
+  // Runtime state such as "running" or "exited".
+  string state = 5;
+  repeated PortMapping ports = 6;
+  // Already redacted by nux-sockguard.
+  map<string, string> labels = 7;
+  uint32 restart_count = 8;
+  int64 created_at_unix_ms = 9;
+}
+
+message PortMapping {
+  string host_ip = 1;
+  uint32 host_port = 2;
+  uint32 container_port = 3;
+  // "tcp", "udp" or "sctp".
+  string protocol = 4;
+}
+
+message InventoryEvent {
+  int64 at_unix_ms = 1;
+  oneof change {
+    ContainerChange container = 2;
+    HostFactsChange host = 3;
+  }
+}
+
+message ContainerChange {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_CREATED = 1;
+    KIND_STARTED = 2;
+    KIND_STOPPED = 3;
+    KIND_REMOVED = 4;
+    KIND_UPDATED = 5;
+  }
+  Kind kind = 1;
+  // State after the change; for KIND_REMOVED only runtime_id is guaranteed.
+  Container container = 2;
+}
+
+message HostFactsChange {
+  HostFacts host = 1;
+}
+
+enum TargetKind {
+  TARGET_KIND_UNSPECIFIED = 0;
+  TARGET_KIND_HOST = 1;
+  TARGET_KIND_CONTAINER = 2;
+}
+
+message Target {
+  TargetKind kind = 1;
+  // Empty for the host; the container's runtime_id otherwise.
+  string id = 2;
+}
+
+message MetricBatch {
+  repeated Series series = 1;
+  // True when these samples come from the local ring buffer after a reconnect.
+  bool replayed = 2;
+}
+
+message Series {
+  Target target = 1;
+  // For example "cpu.usage_percent" or "memory.used_bytes".
+  string metric = 2;
+  repeated Point points = 3;
+}
+
+message Point {
+  int64 ts_unix_ms = 1;
+  double value = 2;
+}
+
+// LogChunk carries at most 500 lines or 256 KB. The agent stops reading the
+// source when gRPC flow control pushes back.
+message LogChunk {
+  string stream_id = 1;
+  repeated LogLine lines = 2;
+}
+
+message LogLine {
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    SOURCE_STDOUT = 1;
+    SOURCE_STDERR = 2;
+    SOURCE_JOURNAL = 3;
+  }
+  int64 ts_unix_ms = 1;
+  Source source = 2;
+  // Raw bytes, because logs are not always valid UTF-8. Never rendered as HTML.
+  bytes text = 3;
+}
+
+message LogStreamEnded {
+  string stream_id = 1;
+  // Empty on a normal end; otherwise a stable code such as LOG-SRC-001.
+  string code = 2;
+}
+
+message CheckResult {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_UP = 1;
+    STATUS_DOWN = 2;
+  }
+  string check_id = 1;
+  // Echoes RunCheck.run_id so the server can match the result.
+  string run_id = 2;
+  Status status = 3;
+  int64 started_at_unix_ms = 4;
+  uint32 latency_ms = 5;
+  // Stable code such as CHK-HTTP-001 when status is DOWN.
+  string error_code = 6;
+}
+
+message RenewRequest {
+  bytes csr_der = 1;
+}
+
+message RequestError {
+  // The server request this answers (stream_id or run_id).
+  string request_id = 1;
+  string code = 2;
+}
+
+// ---- Server to agent -------------------------------------------------------
+
+message ServerMessage {
+  oneof body {
+    // Accepts the connection and sets collection intervals and limits.
+    HelloAck hello_ack = 1;
+    OpenLogStream open_log = 2;
+    CloseLogStream close_log = 3;
+    RunCheck run_check = 4;
+    RenewResponse renew = 5;
+    ConfigUpdate config = 6;
+    // The server is closing the stream (revoked, shutting down, protocol error).
+    Disconnect disconnect = 7;
+  }
+  // v0.2 actions.
+  reserved 100 to 199;
+}
+
+message HelloAck {
+  uint32 protocol_version = 1;
+  uint32 heartbeat_interval_seconds = 2;
+  uint32 metric_interval_seconds = 3;
+  uint32 max_message_bytes = 4;
+  int64 server_time_unix_ms = 5;
+}
+
+message ConfigUpdate {
+  uint32 heartbeat_interval_seconds = 1;
+  uint32 metric_interval_seconds = 2;
+}
+
+message OpenLogStream {
+  string stream_id = 1;
+  oneof source {
+    // A container's runtime_id.
+    string container_runtime_id = 2;
+    // A systemd unit, read with journalctl.
+    string journal_unit = 3;
+  }
+  uint32 tail_lines = 4;
+  // Unix milliseconds; 0 means no lower bound.
+  int64 since_unix_ms = 5;
+}
+
+message CloseLogStream {
+  string stream_id = 1;
+}
+
+// RunCheck asks the agent to run one check. Secrets in the spec are resolved
+// server-side and must never be logged by the agent.
+message RunCheck {
+  string check_id = 1;
+  string run_id = 2;
+  uint32 timeout_ms = 3;
+  oneof spec {
+    HttpCheck http = 4;
+    TcpCheck tcp = 5;
+    DnsCheck dns = 6;
+    TlsCheck tls = 7;
+    PingCheck ping = 8;
+  }
+}
+
+message HttpCheck {
+  string url = 1;
+  string method = 2;
+  // May carry credentials.
+  map<string, string> headers = 3;
+  // Empty means any 2xx.
+  repeated uint32 expected_status = 4;
+  bool verify_tls = 5;
+}
+
+message TcpCheck {
+  string host = 1;
+  uint32 port = 2;
+}
+
+message DnsCheck {
+  string name = 1;
+  // "A", "AAAA", "CNAME", "MX", "TXT" and so on.
+  string record_type = 2;
+  // Optional resolver, host:port; empty uses the host's resolver.
+  string resolver = 3;
+}
+
+message TlsCheck {
+  string host = 1;
+  uint32 port = 2;
+  // Report DOWN when the certificate expires within this many days.
+  uint32 warn_days = 3;
+}
+
+message PingCheck {
+  string host = 1;
+  uint32 count = 2;
+}
+
+message RenewResponse {
+  bytes cert_der = 1;
+  int64 renew_after_unix = 2;
+}
+
+message Disconnect {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_REVOKED = 1;
+    REASON_SHUTTING_DOWN = 2;
+    REASON_PROTOCOL_ERROR = 3;
+  }
+  Reason reason = 1;
+  // Stable code such as GW-STR-002.
+  string code = 2;
+}

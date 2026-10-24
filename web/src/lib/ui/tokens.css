@@ -1,0 +1,122 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/*
+ * Design tokens: the only place colours, spacing and type sizes are defined.
+ * Dark values appear twice (OS preference and explicit choice); tokens.test.ts
+ * keeps the two copies identical and checks WCAG contrast in both themes.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Light theme */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eceff3;
+  --color-border: #c4cbd6;
+  --color-border-strong: #6b7686;
+  --color-text: #14181f;
+  --color-text-muted: #444e5e;
+  --color-accent: #1d4ed8;
+  --color-accent-text: #ffffff;
+  --color-focus: #1d4ed8;
+  --color-status-healthy: #14532d;
+  --color-status-healthy-bg: #dcfce7;
+  --color-status-warning: #713f12;
+  --color-status-warning-bg: #fef3c7;
+  --color-status-critical: #7f1d1d;
+  --color-status-critical-bg: #fee2e2;
+  --color-status-unknown: #374151;
+  --color-status-unknown-bg: #e5e7eb;
+  --color-status-paused: #1e3a8a;
+  --color-status-paused-bg: #dbeafe;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 20px;
+  --font-size-xl: 24px;
+  --line-height-body: 1.5;
+  --line-height-log: 1.4;
+
+  /* Spacing: 4px base unit */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  /* Shape and layout */
+  --radius-1: 4px;
+  --radius-2: 8px;
+  --sidebar-width: 232px;
+  --sidebar-width-collapsed: 56px;
+  --topbar-height: 48px;
+  --target-size: 32px;
+  --row-height: 40px;
+
+  /* Motion */
+  --motion-fast: 150ms ease-out;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-bg: #0e1116;
+    --color-surface: #161b22;
+    --color-surface-sunken: #0a0d12;
+    --color-border: #3b4452;
+    --color-border-strong: #7d8798;
+    --color-text: #e8ebf0;
+    --color-text-muted: #a9b3c1;
+    --color-accent: #8ab4ff;
+    --color-accent-text: #0e1116;
+    --color-focus: #8ab4ff;
+    --color-status-healthy: #86efac;
+    --color-status-healthy-bg: #123524;
+    --color-status-warning: #fcd34d;
+    --color-status-warning-bg: #3a2e08;
+    --color-status-critical: #fca5a5;
+    --color-status-critical-bg: #421616;
+    --color-status-unknown: #cbd5e1;
+    --color-status-unknown-bg: #2a313c;
+    --color-status-paused: #93c5fd;
+    --color-status-paused-bg: #15264d;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-bg: #0e1116;
+  --color-surface: #161b22;
+  --color-surface-sunken: #0a0d12;
+  --color-border: #3b4452;
+  --color-border-strong: #7d8798;
+  --color-text: #e8ebf0;
+  --color-text-muted: #a9b3c1;
+  --color-accent: #8ab4ff;
+  --color-accent-text: #0e1116;
+  --color-focus: #8ab4ff;
+  --color-status-healthy: #86efac;
+  --color-status-healthy-bg: #123524;
+  --color-status-warning: #fcd34d;
+  --color-status-warning-bg: #3a2e08;
+  --color-status-critical: #fca5a5;
+  --color-status-critical-bg: #421616;
+  --color-status-unknown: #cbd5e1;
+  --color-status-unknown-bg: #2a313c;
+  --color-status-paused: #93c5fd;
+  --color-status-paused-bg: #15264d;
+}
+
+:root[data-density='compact'] {
+  --row-height: 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+  }
+}

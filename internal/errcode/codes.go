@@ -12,20 +12,30 @@ import (
 // Code has the form AREA-CATEGORY-NNN, for example SRV-CFG-001.
 type Code string
 
-// Declared codes, grouped by area: SRV (server), API, CLI.
+// Declared codes, grouped by area: SRV (server), API, AUTH, CLI.
 const (
-	SRVCfg001 Code = "SRV-CFG-001"
-	SRVCfg002 Code = "SRV-CFG-002"
-	SRVIO001  Code = "SRV-IO-001"
-	SRVIO002  Code = "SRV-IO-002"
-	SRVIO003  Code = "SRV-IO-003"
-	SRVMig001 Code = "SRV-MIG-001"
-	SRVMig002 Code = "SRV-MIG-002"
-	SRVMig003 Code = "SRV-MIG-003"
-	APINF001  Code = "API-NF-001"
-	CLIArg001 Code = "CLI-ARG-001"
-	CLIArg002 Code = "CLI-ARG-002"
-	CLIArg003 Code = "CLI-ARG-003"
+	SRVCfg001    Code = "SRV-CFG-001"
+	SRVCfg002    Code = "SRV-CFG-002"
+	SRVIO001     Code = "SRV-IO-001"
+	SRVIO002     Code = "SRV-IO-002"
+	SRVIO003     Code = "SRV-IO-003"
+	SRVMig001    Code = "SRV-MIG-001"
+	SRVMig002    Code = "SRV-MIG-002"
+	SRVMig003    Code = "SRV-MIG-003"
+	APINF001     Code = "API-NF-001"
+	APIVal001    Code = "API-VAL-001"
+	APIInt001    Code = "API-INT-001"
+	AuthPwd001   Code = "AUTH-PWD-001" //nolint:gosec // an error code, not a credential
+	AuthDeny001  Code = "AUTH-DENY-001"
+	AuthDeny002  Code = "AUTH-DENY-002"
+	AuthDeny003  Code = "AUTH-DENY-003"
+	AuthDeny004  Code = "AUTH-DENY-004"
+	AuthDeny005  Code = "AUTH-DENY-005"
+	AuthSetup001 Code = "AUTH-SETUP-001"
+	AuthSetup002 Code = "AUTH-SETUP-002"
+	CLIArg001    Code = "CLI-ARG-001"
+	CLIArg002    Code = "CLI-ARG-002"
+	CLIArg003    Code = "CLI-ARG-003"
 )
 
 // Entry describes a code for users, docs and the UI.
@@ -48,6 +58,16 @@ func Entries() []Entry {
 		{SRVMig002, "Database is newer than this nuxd", "The database was written by a newer nuxd version; downgrades are blocked.", "Run the newer nuxd version, or restore a backup taken before the upgrade."},
 		{SRVMig003, "Applied migration was modified", "A migration recorded in the database no longer matches this build.", "Never edit an applied migration. Use the release the database was created with."},
 		{APINF001, "Resource not found", "No such endpoint or resource.", "Check the URL against the API documentation."},
+		{APIVal001, "Invalid request", "The request body is missing, malformed or contains unknown fields.", "Send a JSON body with Content-Type: application/json and only the documented fields."},
+		{APIInt001, "Internal error", "Something went wrong on the server.", "Try again; if it keeps happening, report the request ID from the X-Request-ID response header."},
+		{AuthPwd001, "Password not accepted", "The password does not meet the password policy.", "Use at least 12 characters and avoid common or breached passwords."},
+		{AuthDeny001, "Sign-in failed", "The email or password is incorrect.", "Check the email and password and try again."},
+		{AuthDeny002, "Too many attempts", "Too many failed attempts from this address.", "Wait a few minutes and try again."},
+		{AuthDeny003, "Sign-in required", "You must be signed in to do this.", "Sign in and try again."},
+		{AuthDeny004, "Request blocked", "The request failed the cross-site request check.", "Reload the page and try again."},
+		{AuthDeny005, "Permission denied", "Your role does not allow this action.", "Ask an administrator for the required role."},
+		{AuthSetup001, "Setup token not accepted", "The setup token is missing or wrong.", "Run nuxd setup-token on the server and paste its output."},
+		{AuthSetup002, "Setup already completed", "This server already has an administrator.", "Sign in instead."},
 		{CLIArg001, "Unknown or missing command", "The command is missing or not recognised.", "Run nux without arguments to list the commands."},
 		{CLIArg002, "Invalid command-line argument", "A flag or argument is not valid.", "Check the usage text for the command."},
 		{CLIArg003, "Command not implemented yet", "This command is a placeholder in this version.", "Update nux, or see the roadmap for when it arrives."},

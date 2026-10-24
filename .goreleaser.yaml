@@ -1,6 +1,12 @@
 version: 2
 project_name: nuxdeck
 
+# The server embeds the built UI.
+before:
+  hooks:
+    - npm ci --prefix web
+    - npm run build --prefix web
+
 builds:
   - id: nuxd
     main: ./cmd/nuxd
@@ -31,6 +37,9 @@ archives:
     files:
       - src: cmd/nuxd/LICENSE
         dst: LICENSE
+      # Signed with the archive; the install script reads it from the verified tarball.
+      - src: deploy/systemd/nuxd.service
+        dst: nuxd.service
   - id: nux
     ids: [nux]
     formats: [tar.gz]

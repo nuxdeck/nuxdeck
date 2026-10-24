@@ -5,7 +5,9 @@ CLAUDE.md
 /bin/
 /dist/
 /web/node_modules/
-/web/dist/
+/web/dist/*
+!/web/dist/.gitkeep
+/.dev-data/
 /data/
 .env
 .env.*
