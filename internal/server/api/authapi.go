@@ -17,6 +17,7 @@ import (
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
 const (
@@ -226,6 +227,12 @@ func (a *authAPI) fail(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.As(fe.Err, &inner) {
 			hint = inner.Err.Error()
 		}
+	}
+
+	var pe *pki.FieldError
+	if errors.As(err, &pe) {
+		writeErrorDetail(w, http.StatusUnprocessableEntity, errcode.APIVal001, pe.Field, pe.Msg)
+		return
 	}
 
 	code := errcode.CodeOf(err)

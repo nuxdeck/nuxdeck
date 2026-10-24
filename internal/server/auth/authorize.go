@@ -14,11 +14,12 @@ type Action string
 
 // The actions a handler can ask Authorize about.
 const (
-	ActionSetupStatus   Action = "setup.status"
-	ActionSetupComplete Action = "setup.complete"
-	ActionLogin         Action = "auth.login"
-	ActionLogout        Action = "auth.logout"
-	ActionMeRead        Action = "me.read"
+	ActionSetupStatus      Action = "setup.status"
+	ActionSetupComplete    Action = "setup.complete"
+	ActionLogin            Action = "auth.login"
+	ActionLogout           Action = "auth.logout"
+	ActionMeRead           Action = "me.read"
+	ActionAgentTokenCreate Action = "agents.token.create" //nolint:gosec // an action name, not a credential
 )
 
 // Principal is the caller. The zero value is anonymous.
@@ -40,16 +41,18 @@ type requirement int
 const (
 	public requirement = iota + 1 // anyone, signed in or not
 	signedIn
+	admin
 )
 
 // rules lists every known action. An action missing here is denied, so a new
 // handler cannot ship unprotected by forgetting to register its rule.
 var rules = map[Action]requirement{
-	ActionSetupStatus:   public,
-	ActionSetupComplete: public,
-	ActionLogin:         public,
-	ActionLogout:        signedIn,
-	ActionMeRead:        signedIn,
+	ActionSetupStatus:      public,
+	ActionSetupComplete:    public,
+	ActionLogin:            public,
+	ActionLogout:           signedIn,
+	ActionMeRead:           signedIn,
+	ActionAgentTokenCreate: admin,
 }
 
 // Authorize returns nil if p may perform a, and an AUTH-DENY error otherwise.
@@ -63,6 +66,14 @@ func Authorize(p Principal, a Action) error {
 			return nil
 		}
 		return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
+	case admin:
+		if !p.Authenticated() {
+			return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
+		}
+		if p.HasRole(RoleAdmin) {
+			return nil
+		}
+		return errcode.New(errcode.AuthDeny005, "action %s needs the admin role", a)
 	default:
 		return errcode.New(errcode.AuthDeny005, "action %s is not permitted", a)
 	}

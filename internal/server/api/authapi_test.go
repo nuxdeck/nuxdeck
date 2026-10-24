@@ -10,11 +10,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 )
 
@@ -70,9 +73,13 @@ func newAuthEnv(t *testing.T) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ca, err := pki.LoadOrCreateCA(filepath.Join(dir, "pki"), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &authEnv{
 		t: t, db: db, token: token, logs: logs,
-		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc}),
+		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pki.NewService(db, ca), GatewayURL: "https://nux.example.com:8444"}),
 	}
 }
 

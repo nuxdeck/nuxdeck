@@ -15,6 +15,7 @@ import (
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
 // Readiness reports whether a dependency is usable.
@@ -31,6 +32,10 @@ type Options struct {
 	UI fs.FS
 	// Auth enables sign-in and first-run setup; nil serves only health checks and the UI.
 	Auth *auth.Service
+	// PKI enables enrolment-token creation; it needs Auth. GatewayURL is the https URL agents dial,
+	// embedded in every token.
+	PKI        *pki.Service
+	GatewayURL string
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -50,7 +55,11 @@ func Handler(o Options) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	if o.Auth != nil {
-		(&authAPI{svc: o.Auth, log: o.Log}).register(mux)
+		a := &authAPI{svc: o.Auth, log: o.Log}
+		a.register(mux)
+		if o.PKI != nil {
+			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL}).register(mux)
+		}
 	}
 
 	var ui http.Handler

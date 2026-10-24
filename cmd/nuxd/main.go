@@ -11,15 +11,20 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
 	"github.com/nuxdeck/nuxdeck/web"
@@ -107,7 +112,14 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return err
 	}
-	handler := api.Handler(api.Options{Log: log, Ready: db, Version: version, UI: ui, Auth: svc})
+	ca, err := pki.LoadOrCreateCA(filepath.Join(cfg.DataDir, "pki"), time.Now())
+	if err != nil {
+		return err
+	}
+	handler := api.Handler(api.Options{
+		Log: log, Ready: db, Version: version, UI: ui, Auth: svc,
+		PKI: pki.NewService(db, ca), GatewayURL: gatewayURL(cfg.Gateway.PublicURL),
+	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
 		return err
@@ -119,6 +131,19 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	}
 	log.Info("nuxd stopped")
 	return nil
+}
+
+// gatewayURL is the address embedded in enrolment tokens: the configured public
+// URL, or this machine's host name on the agent port.
+func gatewayURL(configured string) string {
+	if configured != "" {
+		return strings.TrimSuffix(configured, "/")
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "localhost"
+	}
+	return "https://" + net.JoinHostPort(host, "8444")
 }
 
 // newAuthService builds the auth module. While no account exists it makes sure

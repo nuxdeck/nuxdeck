@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,10 +25,11 @@ const DefaultPath = "/etc/nuxd/nuxd.yaml"
 
 // Config holds every nuxd setting.
 type Config struct {
-	DataDir string `yaml:"data_dir"`
-	Log     Log    `yaml:"log"`
-	HTTP    HTTP   `yaml:"http"`
-	TLS     TLS    `yaml:"tls"`
+	DataDir string  `yaml:"data_dir"`
+	Log     Log     `yaml:"log"`
+	HTTP    HTTP    `yaml:"http"`
+	TLS     TLS     `yaml:"tls"`
+	Gateway Gateway `yaml:"gateway"`
 }
 
 // Log configures structured logging.
@@ -49,6 +51,13 @@ type TLS struct {
 	CertFile  string   `yaml:"cert_file"`
 	KeyFile   string   `yaml:"key_file"`
 	Hostnames []string `yaml:"hostnames"`
+}
+
+// Gateway configures how agents reach nuxd.
+type Gateway struct {
+	// PublicURL is the https URL agents dial (port 8444), embedded in enrolment tokens.
+	// Empty means https://<host name of this machine>:8444.
+	PublicURL string `yaml:"public_url"`
 }
 
 // Defaults returns the built-in configuration.
@@ -108,6 +117,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	set(&cfg.HTTP.RedirectAddr, "NUXD_REDIRECT_ADDR")
 	set(&cfg.TLS.CertFile, "NUXD_TLS_CERT_FILE")
 	set(&cfg.TLS.KeyFile, "NUXD_TLS_KEY_FILE")
+	set(&cfg.Gateway.PublicURL, "NUXD_GATEWAY_PUBLIC_URL")
 
 	if v := getenv("NUXD_TLS_HOSTNAMES"); v != "" {
 		cfg.TLS.Hostnames = nil
@@ -137,6 +147,12 @@ func (c Config) Validate() error {
 	}
 	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return errcode.New(errcode.SRVCfg002, "tls.cert_file and tls.key_file must be set together")
+	}
+	if c.Gateway.PublicURL != "" {
+		u, err := url.Parse(c.Gateway.PublicURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" && u.Path != "/" {
+			return errcode.New(errcode.SRVCfg002, "gateway.public_url must be an https URL without a path, got %q", c.Gateway.PublicURL)
+		}
 	}
 	for _, h := range c.TLS.Hostnames {
 		if strings.ContainsAny(h, " /@:") {
