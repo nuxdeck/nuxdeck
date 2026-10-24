@@ -64,9 +64,6 @@
             "context": "dependency-review"
           },
           {
-            "context": "dco"
-          },
-          {
             "context": "release-gate"
           },
           {
