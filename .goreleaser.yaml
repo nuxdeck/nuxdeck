@@ -1,0 +1,111 @@
+version: 2
+project_name: nuxdeck
+
+builds:
+  - id: nuxd
+    main: ./cmd/nuxd
+    binary: nuxd
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64]
+  - id: nux
+    main: ./cmd/nux
+    binary: nux
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: nuxd
+    ids: [nuxd]
+    formats: [tar.gz]
+    name_template: "nuxd_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: cmd/nuxd/LICENSE
+        dst: LICENSE
+  - id: nux
+    ids: [nux]
+    formats: [tar.gz]
+    name_template: "nux_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: cmd/nux/LICENSE
+        dst: LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args: [sign-blob, "--bundle=${signature}", "${artifact}", "--yes"]
+    artifacts: checksum
+
+sboms:
+  - id: archives
+    artifacts: archive
+    documents: ["${artifact}.spdx.json"]
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+dockers_v2:
+  - id: nuxd
+    ids: [nuxd]
+    dockerfile: deploy/docker/Dockerfile.nuxd
+    images: [ghcr.io/nuxdeck/nuxd]
+    tags: ["{{ .Tag }}"]
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.title: nuxd
+      org.opencontainers.image.source: https://github.com/nuxdeck/nuxdeck
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: AGPL-3.0-only
+  - id: nux-agent
+    ids: [nux]
+    dockerfile: deploy/docker/Dockerfile.nux-agent
+    images: [ghcr.io/nuxdeck/nux-agent]
+    tags: ["{{ .Tag }}"]
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.title: nux-agent
+      org.opencontainers.image.source: https://github.com/nuxdeck/nuxdeck
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: Apache-2.0
+
+docker_signs:
+  - cmd: cosign
+    args: [sign, "${artifact}@${digest}", "--yes"]
+    artifacts: all
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Other
+      order: 2
+  filters:
+    exclude:
+      - '^docs(\([^)]*\))?:'
+      - '^ci(\([^)]*\))?:'
+      - '^chore(\([^)]*\))?:'
+
+release:
+  github:
+    owner: nuxdeck
+    name: nuxdeck
+  prerelease: auto
