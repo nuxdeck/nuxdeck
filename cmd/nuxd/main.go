@@ -9,16 +9,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
+	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
+	"github.com/nuxdeck/nuxdeck/web"
 )
 
 // Set at build time with -ldflags -X.
@@ -36,6 +40,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+	if len(args) > 0 && args[0] == "setup-token" {
+		return setupToken(args[1:], stdout, stderr, getenv)
+	}
 	fs := flag.NewFlagSet("nuxd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", getenvDefault(getenv, "NUXD_CONFIG", config.DefaultPath), "path to the YAML configuration file")
@@ -92,7 +99,15 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 		return err
 	}
 
-	handler := api.Handler(api.Options{Log: log, Ready: db, Version: version})
+	ui, err := web.FS()
+	if err != nil {
+		return errcode.Wrap(errcode.SRVIO001, "load embedded web UI", err)
+	}
+	svc, err := newAuthService(ctx, db, cfg.DataDir, log)
+	if err != nil {
+		return err
+	}
+	handler := api.Handler(api.Options{Log: log, Ready: db, Version: version, UI: ui, Auth: svc})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
 		return err
@@ -104,6 +119,61 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	}
 	log.Info("nuxd stopped")
 	return nil
+}
+
+// newAuthService builds the auth module. While no account exists it makes sure
+// a setup token is on disk; the token itself is never logged.
+func newAuthService(ctx context.Context, db *store.Store, dataDir string, log *slog.Logger) (*auth.Service, error) {
+	token := auth.NewSetupToken(dataDir)
+	svc, err := auth.NewService(ctx, auth.Config{
+		Repo: db, Hasher: auth.NewHasher(), Passwords: auth.NewPasswordPolicy(), SetupToken: token, Log: log,
+	})
+	if err != nil {
+		return nil, errcode.Wrap(errcode.APIInt001, "start auth", err)
+	}
+	required, err := svc.SetupRequired(ctx)
+	if err != nil {
+		return nil, errcode.Wrap(errcode.SRVIO001, "check for accounts", err)
+	}
+	if required {
+		if err := token.Ensure(); err != nil {
+			return nil, errcode.Wrap(errcode.SRVIO001, "create setup token", err)
+		}
+		log.Info("first-run setup is required: run `nuxd setup-token` on this host and enter its output in the setup page", "token_file", token.Path())
+	}
+	return svc, nil
+}
+
+// setupToken prints the first-run setup token, so it never has to appear in logs.
+func setupToken(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+	fs2 := flag.NewFlagSet("nuxd setup-token", flag.ContinueOnError)
+	fs2.SetOutput(stderr)
+	configPath := fs2.String("config", getenvDefault(getenv, "NUXD_CONFIG", config.DefaultPath), "path to the YAML configuration file")
+	if err := fs2.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	explicit := getenv("NUXD_CONFIG") != ""
+	fs2.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "config" })
+
+	cfg, err := config.Load(*configPath, explicit, getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "nuxd:", err)
+		return 1
+	}
+	token, err := auth.NewSetupToken(cfg.DataDir).Read()
+	if errors.Is(err, fs.ErrNotExist) {
+		_, _ = fmt.Fprintln(stderr, "nuxd:", errcode.New(errcode.AuthSetup002, "no setup token in %s: setup is complete, or nuxd has not started yet", cfg.DataDir))
+		return 1
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "nuxd:", errcode.Wrap(errcode.SRVIO001, "read setup token", err))
+		return 1
+	}
+	_, _ = fmt.Fprintln(stdout, token)
+	return 0
 }
 
 func getenvDefault(getenv func(string) string, key, fallback string) string {

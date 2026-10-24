@@ -24,8 +24,8 @@ const (
 	apache     = "Apache-2.0"
 )
 
-// agplDirs are the only AGPL-3.0 Go trees; everything else is Apache-2.0.
-var agplDirs = []string{"cmd/nuxd", "internal/server"}
+// agplDirs are the only AGPL-3.0 Go trees (web holds the embedded UI); everything else is Apache-2.0.
+var agplDirs = []string{"cmd/nuxd", "internal/server", "web"}
 
 func under(rel, dir string) bool {
 	return rel == dir || strings.HasPrefix(rel, dir+"/")

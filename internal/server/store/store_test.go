@@ -42,8 +42,9 @@ func TestOpenCreatesWALDatabaseAndMigrates(t *testing.T) {
 	if err := s.db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
 		t.Errorf("foreign_keys = %d (err %v), want 1", fk, err)
 	}
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 1 {
-		t.Errorf("SchemaVersion = %d (err %v), want 1", v, err)
+	want := len(realMigrations(t))
+	if v, err := s.SchemaVersion(ctx); err != nil || v != want {
+		t.Errorf("SchemaVersion = %d (err %v), want %d", v, err, want)
 	}
 	if err := s.Ping(ctx); err != nil {
 		t.Errorf("Ping: %v", err)
@@ -85,8 +86,28 @@ func migrateWith(t *testing.T, dir string, files fstest.MapFS) error {
 	return migrate(context.Background(), s.db, files, discard)
 }
 
+// realMigrations returns the embedded migrations as a map the tests can extend or edit.
+func realMigrations(t *testing.T) fstest.MapFS {
+	t.Helper()
+	entries, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := fstest.MapFS{}
+	for _, e := range entries {
+		out[e.Name()] = &fstest.MapFile{Data: mustRead(t, "migrations/"+e.Name())}
+	}
+	return out
+}
+
+func with(m fstest.MapFS, name, body string) fstest.MapFS {
+	m[name] = &fstest.MapFile{Data: []byte(body)}
+	return m
+}
+
 func TestMigrationGuards(t *testing.T) {
-	base := fstest.MapFS{"0001_settings.sql": {Data: mustRead(t, "migrations/0001_settings.sql")}}
+	edited := realMigrations(t)
+	edited["0001_settings.sql"] = &fstest.MapFile{Data: []byte("-- edited\n")}
 
 	tests := []struct {
 		name  string
@@ -94,10 +115,10 @@ func TestMigrationGuards(t *testing.T) {
 		want  errcode.Code
 	}{
 		{"database newer than binary", fstest.MapFS{}, errcode.SRVMig002},
-		{"applied migration edited", fstest.MapFS{"0001_settings.sql": {Data: []byte("-- edited\n")}}, errcode.SRVMig003},
-		{"gap in numbering", fstest.MapFS{"0001_settings.sql": base["0001_settings.sql"], "0003_x.sql": {Data: []byte("SELECT 1;")}}, errcode.SRVMig001},
-		{"bad file name", fstest.MapFS{"init.sql": {Data: []byte("SELECT 1;")}}, errcode.SRVMig001},
-		{"failing statement", fstest.MapFS{"0001_settings.sql": base["0001_settings.sql"], "0002_bad.sql": {Data: []byte("CREATE TABLE t (")}}, errcode.SRVMig001},
+		{"applied migration edited", edited, errcode.SRVMig003},
+		{"gap in numbering", with(realMigrations(t), "0009_x.sql", "SELECT 1;"), errcode.SRVMig001},
+		{"bad file name", with(realMigrations(t), "init.sql", "SELECT 1;"), errcode.SRVMig001},
+		{"failing statement", with(realMigrations(t), "0004_bad.sql", "CREATE TABLE t ("), errcode.SRVMig001},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,10 +132,7 @@ func TestMigrationGuards(t *testing.T) {
 
 func TestFailedMigrationRollsBack(t *testing.T) {
 	dir := t.TempDir()
-	files := fstest.MapFS{
-		"0001_settings.sql": {Data: mustRead(t, "migrations/0001_settings.sql")},
-		"0002_bad.sql":      {Data: []byte("CREATE TABLE half (id INTEGER); CREATE TABLE half (id INTEGER);")},
-	}
+	files := with(realMigrations(t), "0004_bad.sql", "CREATE TABLE half (id INTEGER); CREATE TABLE half (id INTEGER);")
 	if err := migrateWith(t, dir, files); err == nil {
 		t.Fatal("expected failure")
 	}

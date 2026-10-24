@@ -7,11 +7,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
+	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 )
 
 // Readiness reports whether a dependency is usable.
@@ -24,6 +27,10 @@ type Options struct {
 	Log     *slog.Logger
 	Ready   Readiness
 	Version string
+	// UI is the built web UI; nil serves only the API.
+	UI fs.FS
+	// Auth enables sign-in and first-run setup; nil serves only health checks and the UI.
+	Auth *auth.Service
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -42,7 +49,20 @@ func Handler(o Options) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	if o.Auth != nil {
+		(&authAPI{svc: o.Auth, log: o.Log}).register(mux)
+	}
+
+	var ui http.Handler
+	if o.UI != nil {
+		ui = newUI(o.UI)
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		api := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/")
+		if ui != nil && !api && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			ui.ServeHTTP(w, r)
+			return
+		}
 		writeError(w, http.StatusNotFound, errcode.APINF001)
 	})
 
@@ -59,8 +79,19 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError renders the shared error shape from the code registry; it never
 // includes internal detail.
 func writeError(w http.ResponseWriter, status int, code errcode.Code) {
+	writeErrorDetail(w, status, code, "", "")
+}
+
+// writeErrorDetail adds the offending field and a specific hint. The hint must
+// come from our own validators, never from user input or internal errors.
+func writeErrorDetail(w http.ResponseWriter, status int, code errcode.Code, field, hint string) {
 	e, _ := errcode.Lookup(code)
-	writeJSON(w, status, map[string]any{"error": map[string]string{
-		"code": string(code), "message": e.Message, "hint": e.Hint,
-	}})
+	if hint == "" {
+		hint = e.Hint
+	}
+	body := map[string]string{"code": string(code), "message": e.Message, "hint": hint}
+	if field != "" {
+		body["field"] = field
+	}
+	writeJSON(w, status, map[string]any{"error": body})
 }

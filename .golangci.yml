@@ -8,6 +8,10 @@ linters:
     - gosec
     - errcheck
     - revive
+  exclusions:
+    paths:
+      # npm packages can ship Go files; they are not ours to lint.
+      - web/node_modules
 
 formatters:
   enable:
