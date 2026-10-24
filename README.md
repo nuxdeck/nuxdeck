@@ -8,25 +8,25 @@ It ships as two Go binaries: `nuxd` (server, web UI embedded) and `nux` (agent, 
 
 ## Repository layout
 
-| Path                                | Contents                                  | Licence    |
-| ----------------------------------- | ----------------------------------------- | ---------- |
-| `cmd/nuxd/`, `internal/server/`     | Server                                    | AGPL-3.0   |
-| `web/`                              | Svelte 5 + TypeScript UI                  | AGPL-3.0   |
-| `cmd/nux/`, `internal/agent/`       | Agent and CLI                             | Apache-2.0 |
-| `internal/errcode/`                 | Error codes shared by server and agent    | Apache-2.0 |
-| `proto/`, `pkg/`                    | Agent protocol, generated Go client       | Apache-2.0 |
-| `deploy/`, `test/`                  | systemd units, Dockerfiles, e2e tests     | Apache-2.0 |
-| `docs/`                             | Planning documents (vision to roadmap)    | see `REUSE.toml` |
+| Path                            | Contents                               | Licence          |
+| ------------------------------- | -------------------------------------- | ---------------- |
+| `cmd/nuxd/`, `internal/server/` | Server                                 | AGPL-3.0         |
+| `web/`                          | Svelte 5 + TypeScript UI               | AGPL-3.0         |
+| `cmd/nux/`, `internal/agent/`   | Agent and CLI                          | Apache-2.0       |
+| `internal/errcode/`             | Error codes shared by server and agent | Apache-2.0       |
+| `proto/`, `pkg/`                | Agent protocol, generated Go client    | Apache-2.0       |
+| `deploy/`, `test/`              | systemd units, Dockerfiles, e2e tests  | Apache-2.0       |
+| `docs/`                         | Planning documents (vision to roadmap) | see `REUSE.toml` |
 
 Full licence texts are in `LICENSES/`; see [LICENSE](LICENSE) for the split.
 
 ## Development
 
-| Command      | Does                                                       |
-| ------------ | ---------------------------------------------------------- |
-| `make lint`  | golangci-lint                                              |
-| `make test`  | `go test -race ./...`                                      |
-| `make build` | builds `nuxd` and `nux` into `bin/`                        |
+| Command      | Does                                |
+| ------------ | ----------------------------------- |
+| `make lint`  | golangci-lint                       |
+| `make test`  | `go test -race ./...`               |
+| `make build` | builds `nuxd` and `nux` into `bin/` |
 
 `make dev`, `dev-agent`, `proto`, `api`, `e2e` and `release-snapshot` exit with an error naming the backlog item that will implement them.
 
