@@ -28,33 +28,19 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Detect entry points
-        id: mains
-        run: |
-          if deploy/release/has-mains.sh; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::cmd/nuxd or cmd/nux has no main package yet (NUX-5, NUX-6); skipping the snapshot build and image scan"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Test release scripts
         run: bash deploy/release/next-version_test.sh
-      - if: steps.mains.outputs.ready == 'true'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - if: steps.mains.outputs.ready == 'true'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - if: steps.mains.outputs.ready == 'true'
-        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.55.0
-      - if: steps.mains.outputs.ready == 'true'
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: v2.19.0
           args: release --snapshot --clean --skip=sign
       - name: Find snapshot images
-        if: steps.mains.outputs.ready == 'true'
         id: images
         run: |
           nuxd=$(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^ghcr.io/nuxdeck/nuxd:.*amd64$' | head -n1)
@@ -63,7 +49,6 @@ jobs:
           echo "nuxd=$nuxd" >> "$GITHUB_OUTPUT"
           echo "agent=$agent" >> "$GITHUB_OUTPUT"
       - name: Trivy scan nuxd
-        if: steps.mains.outputs.ready == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.images.outputs.nuxd }}
@@ -72,7 +57,6 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
       - name: Trivy scan nux-agent
-        if: steps.mains.outputs.ready == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.images.outputs.agent }}
@@ -93,17 +77,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Detect entry points
-        id: mains
-        run: |
-          if deploy/release/has-mains.sh; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::no main packages yet (NUX-5, NUX-6); skipping the reproducibility check"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.mains.outputs.ready == 'true'
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: v2.19.0
@@ -111,7 +85,6 @@ jobs:
       # Hashes live outside the workspace: an untracked file would mark the second
       # build's VCS stamp as dirty and make the binaries differ.
       - name: Hash, rebuild, compare
-        if: steps.mains.outputs.ready == 'true'
         run: |
           hashes() { (cd dist && find . -type f \( -name nuxd -o -name nux \) -exec sha256sum {} + | sort -k2); }
           hashes > "$RUNNER_TEMP/first.txt"

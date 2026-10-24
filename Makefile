@@ -7,16 +7,16 @@ test:
 	go test -race ./...
 
 build:
-	go build ./...
+	go build -trimpath -o bin/ ./cmd/nuxd ./cmd/nux
 
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 licences:
-	go run github.com/google/go-licenses/v2@v2.0.1 check ./... --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,Zlib,Unlicense,AGPL-3.0
+	go run github.com/google/go-licenses/v2@v2.0.1 check ./... --ignore github.com/nuxdeck/nuxdeck --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,0BSD,Zlib,Unlicense,AGPL-3.0
 
 dev:
-	@echo "make dev: not implemented yet (NUX-5, NUX-7)" >&2; exit 1
+	@echo "make dev: not implemented yet (NUX-7)" >&2; exit 1
 
 dev-agent:
 	@echo "make dev-agent: not implemented yet (NUX-14)" >&2; exit 1

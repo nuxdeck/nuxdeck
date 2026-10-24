@@ -14,7 +14,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # Provisional: docs/ and repository metadata have no licence decision yet.
 [[annotations]]
-path = ["docs/**", "*.md", "Makefile", "go.mod", ".gitignore", ".editorconfig", ".golangci.yml", ".github/**", ".semgrepignore", ".goreleaser.yaml", "REUSE.toml"]
+path = ["docs/**", "*.md", "Makefile", "go.mod", "go.sum", ".gitignore", ".editorconfig", ".golangci.yml", ".github/**", ".semgrepignore", ".goreleaser.yaml", "REUSE.toml"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 The Nux Deck Authors"
 SPDX-License-Identifier = "Apache-2.0"
