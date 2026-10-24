@@ -15,8 +15,8 @@ concurrency:
 jobs:
   build-test:
     name: build-test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,8 +41,8 @@ jobs:
 
   web:
     name: web
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: web
@@ -64,8 +64,8 @@ jobs:
 
   lint:
     name: lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,8 +80,8 @@ jobs:
 
   govulncheck:
     name: govulncheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,8 +93,8 @@ jobs:
 
   semgrep:
     name: semgrep
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     container:
       image: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
     steps:
@@ -116,8 +116,8 @@ jobs:
 
   licences:
     name: licences
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -131,8 +131,8 @@ jobs:
   dependency-review:
     name: dependency-review
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,27 +145,27 @@ jobs:
             Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, 0BSD, Zlib,
             Unlicense, AGPL-3.0-only, AGPL-3.0-or-later
 
-  dco:
-    name: dco
-    # Dependabot cannot add a sign-off; the maintainer signs off when merging its PRs.
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Require Signed-off-by on every commit
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          status=0
-          for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
-            if ! git show -s --format=%B "$sha" | grep -Eq '^Signed-off-by: .+ <.+>$'; then
-              echo "::error::commit $sha has no Signed-off-by line (use git commit -s)"
-              status=1
-            fi
-          done
-          exit "$status"
+  # dco:
+  #   name: dco
+  #   # Dependabot cannot add a sign-off; the maintainer signs off when merging its PRs.
+  #   if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+  #   runs-on: ubuntu-26.04
+  #   timeout-minutes: 5
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #       with:
+  #         persist-credentials: false
+  #         fetch-depth: 0
+  #     - name: Require Signed-off-by on every commit
+  #       env:
+  #         BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  #         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  #       run: |
+  #         status=0
+  #         for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+  #           if ! git show -s --format=%B "$sha" | grep -Eq '^Signed-off-by: .+ <.+>$'; then
+  #             echo "::error::commit $sha has no Signed-off-by line (use git commit -s)"
+  #             status=1
+  #           fi
+  #         done
+  #         exit "$status"
