@@ -21,3 +21,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore(deps)
+  - package-ecosystem: npm
+    directory: /web
+    target-branch: staging
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)

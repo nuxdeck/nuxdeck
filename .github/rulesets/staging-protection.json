@@ -40,6 +40,9 @@
             "context": "build-test"
           },
           {
+            "context": "web"
+          },
+          {
             "context": "lint"
           },
           {

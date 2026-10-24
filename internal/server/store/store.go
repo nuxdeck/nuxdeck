@@ -8,11 +8,13 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver, registers "sqlite"
 
@@ -25,6 +27,36 @@ var migrationFiles embed.FS
 // Store wraps the nuxd state database.
 type Store struct {
 	db *sql.DB
+	// Now supplies timestamps; nil means time.Now. Tests set it.
+	Now func() time.Time
+}
+
+func (s *Store) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// inTx runs fn in a transaction that takes the write lock immediately (see dsn),
+// so a read-then-write inside fn cannot race with another writer.
+func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = fn(tx); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 // Open creates the data directory if needed, opens nux.db in WAL mode and
@@ -78,6 +110,7 @@ func dsn(path string) string {
 	for _, p := range []string{"journal_mode(WAL)", "foreign_keys(1)", "busy_timeout(5000)", "synchronous(NORMAL)"} {
 		q.Add("_pragma", p)
 	}
+	q.Set("_txlock", "immediate")
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
 }
 
