@@ -40,7 +40,7 @@ By making a contribution to this project, I certify that:
 
 ## Workflow
 
-- Branches: `nux-<issue>-<short-name>`; merge to protected `main` by pull request.
+- Branches: `nux-<issue>-<short-name>`, merged to `staging` by pull request (see below).
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org/), for example `feat(agent): add podman socket discovery`.
 - Pull requests reference the backlog item and requirement IDs: `Closes NUX-15 · INV-1, INV-2`.
 - Run `make lint` and `make test` before opening a pull request.
@@ -58,8 +58,10 @@ Every pull request must pass these jobs (`.github/workflows/ci.yml`) before it c
 | `licences`          | `reuse lint` and the dependency licence allowlist (`make licences`)             |
 | `dependency-review` | New dependencies: high-severity advisories and disallowed licences              |
 | `dco`               | `Signed-off-by` on every commit                                                 |
+| `release-gate`      | Snapshot release build and Trivy scan of both images (critical and high fail)   |
+| `reproducible`      | Two builds of the same commit produce identical binaries                         |
 
-`main` is protected: changes land only through a pull request that passes these jobs and is approved by a code owner (`.github/CODEOWNERS`).
+Branch flow: open pull requests against `staging`. Pull requests into `staging` and `main`, and pushes to `staging`, also run `release-gate` (GoReleaser snapshot build and Trivy scan of the images) and `reproducible` (two builds, identical hashes). `main` changes only by a pull request from `staging` approved by a code owner (`.github/CODEOWNERS`); each merge to `main` publishes the next `v0.1.0-alpha.N` release (ADR-015).
 
 ## Licensing rules
 
