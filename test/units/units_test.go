@@ -67,3 +67,33 @@ func TestAGT6_AgentUnitIsSandboxed(t *testing.T) {
 		}
 	}
 }
+
+// ADR-011: the process that holds the container socket has no network and no capabilities.
+func TestAGT6_SockguardUnitHasNoNetworkAndNoPrivileges(t *testing.T) {
+	d := directives(t, "../../deploy/systemd/nux-sockguard.service")
+
+	one := func(key string) string {
+		if len(d[key]) != 1 {
+			t.Fatalf("%s must be set exactly once, found %v", key, d[key])
+		}
+		return d[key][0]
+	}
+	for key, want := range map[string]string{
+		"User": "nux-sg", "Group": "nux", "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX",
+		"NoNewPrivileges": "yes", "ProtectSystem": "strict", "ProtectHome": "yes", "MemoryMax": "64M",
+		"RuntimeDirectory": "nux", "MemoryDenyWriteExecute": "yes",
+	} {
+		if got := one(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if caps := d["CapabilityBoundingSet"]; len(caps) != 1 || caps[0] != "" {
+		t.Errorf("CapabilityBoundingSet = %q, want empty", caps)
+	}
+	if !strings.Contains(strings.Join(d["SystemCallFilter"], " "), "@system-service") {
+		t.Errorf("SystemCallFilter = %v, want @system-service", d["SystemCallFilter"])
+	}
+	if !strings.Contains(one("ExecStart"), "sockguard") {
+		t.Errorf("ExecStart = %q", one("ExecStart"))
+	}
+}

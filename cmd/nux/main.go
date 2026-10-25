@@ -30,6 +30,7 @@ const usage = `Usage: nux [flags] <command>
 Commands:
   version   print the nux version
   agent     enrol this host and run the host agent (nux agent enroll | run)
+  sockguard serve the read-only container API proxy (used by the agent, not by hand)
   login     sign in to nuxd (not implemented yet)
 
 Flags:
@@ -73,6 +74,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return fail(stderr, err, 2)
 		}
 		return runAgent(ctx, fs.Args()[1:], settings, stdin, stdout, stderr, getenv)
+	case "sockguard":
+		settings, err := cli.Resolve(flags, getenv, os.UserConfigDir)
+		if err != nil {
+			return fail(stderr, err, 2)
+		}
+		return runSockguard(ctx, fs.Args()[1:], settings, stderr, getenv)
 	case "login":
 		if _, err := cli.Resolve(flags, getenv, os.UserConfigDir); err != nil {
 			return fail(stderr, err, 2)

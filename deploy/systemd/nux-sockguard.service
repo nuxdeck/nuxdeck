@@ -1,0 +1,52 @@
+[Unit]
+Description=Nux Deck sockguard (read-only container API proxy)
+Documentation=https://github.com/nuxdeck/nuxdeck
+After=docker.service podman.socket
+# Rootless Podman runs the same command from a user unit instead (not shipped in v0.1).
+
+[Service]
+Type=simple
+# nux-sg is the only account in the docker group; the socket is created with group nux so only the agent can use it.
+User=nux-sg
+Group=nux
+ExecStart=/usr/local/bin/nux sockguard --socket /run/nux/sockguard.sock
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+
+# /run/nux is created for this unit, owned by nux-sg:nux; the agent (group nux) reaches the socket inside it.
+RuntimeDirectory=nux
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0117
+
+# Sandbox: no network at all, only Unix sockets, no capabilities.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
