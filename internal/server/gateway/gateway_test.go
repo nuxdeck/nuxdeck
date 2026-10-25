@@ -47,6 +47,7 @@ type env struct {
 	gw       *gateway.Gateway
 	addr     string
 	events   chan presence
+	msgs     chan *agentv1.AgentMessage
 	stopGW   context.CancelFunc
 	gwStoped chan struct{}
 }
@@ -71,7 +72,7 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, dir: dir, db: db, ca: ca, pki: pki.NewService(db, ca), events: make(chan presence, 64), gwStoped: make(chan struct{})}
+	e := &env{t: t, dir: dir, db: db, ca: ca, pki: pki.NewService(db, ca), events: make(chan presence, 64), msgs: make(chan *agentv1.AgentMessage, 1024), gwStoped: make(chan struct{})}
 
 	var repo gateway.Repository = db
 	if wrap != nil {
@@ -82,6 +83,12 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 		ServerCert: ca.ServerCertificates([]string{"localhost", "127.0.0.1"}).GetCertificate,
 		Heartbeat:  beat,
 		OnPresence: func(id string, online bool) { e.events <- presence{id, online} },
+		OnMessage: func(_ string, m *agentv1.AgentMessage) {
+			select {
+			case e.msgs <- m:
+			default:
+			}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

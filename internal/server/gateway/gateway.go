@@ -92,6 +92,9 @@ type Options struct {
 	ServerCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 	// Heartbeat overrides DefaultHeartbeat; tests shorten it.
 	Heartbeat time.Duration
+	// OnMessage receives every message an agent sends after Hello (inventory, metrics, ...), in order,
+	// on the stream's goroutine. It must not block.
+	OnMessage func(agentID string, m *agentv1.AgentMessage)
 	// OnPresence is told when an agent goes online or offline. It must not block.
 	OnPresence func(agentID string, online bool)
 	// Now supplies the clock; nil means time.Now.

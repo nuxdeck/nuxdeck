@@ -125,6 +125,9 @@ func (g *Gateway) Connect(stream grpc.BidiStreamingServer[agentv1.AgentMessage, 
 	for {
 		select {
 		case m := <-msgs:
+			if g.o.OnMessage != nil {
+				g.o.OnMessage(agentID, m)
+			}
 			switch m.GetBody().(type) {
 			case *agentv1.AgentMessage_Heartbeat:
 				if !timer.Stop() {

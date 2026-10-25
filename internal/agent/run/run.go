@@ -36,6 +36,15 @@ const (
 	maxCertRejections = 5
 )
 
+// Inventory is the agent's view of its host and containers; *inventory.Collector implements it.
+type Inventory interface {
+	// Attach returns the current state and the changes that follow it. The channel is closed if
+	// the caller falls behind, in which case it attaches again.
+	Attach() (*agentv1.InventorySnapshot, <-chan *agentv1.InventoryEvent, func())
+	// Errors lists the collectors that currently fail.
+	Errors() []*agentv1.CollectorError
+}
+
 // Config is what the loop needs.
 type Config struct {
 	StateDir string
@@ -47,6 +56,8 @@ type Config struct {
 	Backoff *Backoff
 	// Now supplies the clock; nil means time.Now.
 	Now func() time.Time
+	// Inventory, when set, is sent as a snapshot after every connect and then as change events.
+	Inventory Inventory
 	// RenewAt overrides when to renew (default: two thirds into the certificate's life); tests use it.
 	RenewAt func(*identity.Identity) time.Time
 }
@@ -167,6 +178,21 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 	}
 	c.Log.Info("connected to nuxd", "agent_id", id.AgentID, "heartbeat", interval.String())
 
+	var changes <-chan *agentv1.InventoryEvent // nil without an inventory: that case never fires
+	detach := func() {}
+	defer func() { detach() }()
+	attach := func() error {
+		detach()
+		var snap *agentv1.InventorySnapshot
+		snap, changes, detach = c.Inventory.Attach()
+		return stream.Send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Snapshot{Snapshot: snap}})
+	}
+	if c.Inventory != nil {
+		if err := attach(); err != nil {
+			return classifyStreamError(err)
+		}
+	}
+
 	beat := time.NewTicker(interval)
 	defer beat.Stop()
 	renewTimer := time.NewTimer(time.Until(c.renewAt(id)))
@@ -176,7 +202,7 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 	for {
 		select {
 		case <-beat.C:
-			if err := stream.Send(heartbeat(c.Now())); err != nil {
+			if err := stream.Send(heartbeat(c.Now(), c.Inventory)); err != nil {
 				return classifyStreamError(err)
 			}
 		case <-renewTimer.C:
@@ -213,6 +239,16 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 			default:
 				// Log, check and config requests arrive with their modules (NUX-24, 27, 20).
 			}
+		case ev, ok := <-changes:
+			var err error
+			if ok {
+				err = stream.Send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Event{Event: ev}})
+			} else {
+				err = attach() // fell behind: a fresh snapshot replaces the lost changes
+			}
+			if err != nil {
+				return classifyStreamError(err)
+			}
 		case err := <-recvErr:
 			return classifyStreamError(err)
 		case <-ctx.Done():
@@ -228,13 +264,14 @@ func hello(version string) *agentv1.AgentMessage {
 	}}}
 }
 
-func heartbeat(now time.Time) *agentv1.AgentMessage {
+func heartbeat(now time.Time, inv Inventory) *agentv1.AgentMessage {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	return &agentv1.AgentMessage{Body: &agentv1.AgentMessage_Heartbeat{Heartbeat: &agentv1.Heartbeat{
-		SentAtUnixMs: now.UnixMilli(),
-		Stats:        &agentv1.AgentStats{MemoryBytes: ms.Sys},
-	}}}
+	stats := &agentv1.AgentStats{MemoryBytes: ms.Sys}
+	if inv != nil {
+		stats.CollectorErrors = inv.Errors()
+	}
+	return &agentv1.AgentMessage{Body: &agentv1.AgentMessage_Heartbeat{Heartbeat: &agentv1.Heartbeat{SentAtUnixMs: now.UnixMilli(), Stats: stats}}}
 }
 
 func newKeyAndCSR() (*ecdsa.PrivateKey, []byte, error) {

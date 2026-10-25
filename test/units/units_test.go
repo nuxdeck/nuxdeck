@@ -39,7 +39,7 @@ func TestAGT6_AgentUnitIsSandboxed(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"NoNewPrivileges": "yes", "ProtectSystem": "strict", "ProtectHome": "yes", "PrivateTmp": "yes",
-		"RestrictAddressFamilies": "AF_INET AF_INET6 AF_UNIX", "MemoryDenyWriteExecute": "yes",
+		"RestrictAddressFamilies": "AF_INET AF_INET6 AF_UNIX AF_NETLINK", "MemoryDenyWriteExecute": "yes",
 	} {
 		if got := one(key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)

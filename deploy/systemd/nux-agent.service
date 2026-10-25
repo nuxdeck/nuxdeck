@@ -39,7 +39,8 @@ ProtectHostname=yes
 # The collectors read /proc/stat, /proc/meminfo and friends, so the whole of /proc stays visible (not ProcSubset=pid).
 ProtectProc=invisible
 ProcSubset=all
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK is how the agent lists the host's network interfaces (read-only; it cannot change routes without CAP_NET_ADMIN).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

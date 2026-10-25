@@ -62,6 +62,8 @@ sudo install -m 0644 deploy/systemd/nux-agent.service /etc/systemd/system/ && su
 
 Container data comes only through `nux sockguard` (`deploy/systemd/nux-sockguard.service`, user `nux-sg`, the only account in the `docker` group). It listens on `/run/nux/sockguard.sock` (mode 0660, group `nux`), forwards a fixed list of read-only `GET` calls and strips environment variables and mount sources from the answers; the agent itself never opens the Docker or Podman socket. Rootless Podman needs a user unit that v0.1 does not ship yet.
 
+Once connected, the agent reports the host (OS, kernel, CPU, memory, disks, IPs, boot time) and its Docker and Podman containers (image, state, published ports, restarts), then every change as it happens. Without `nux-sockguard` or a container runtime the host is still reported and the heartbeat carries `AGT-COL-001`.
+
 The token carries the gateway address and the CA fingerprint, so the agent verifies `nuxd` before it sends the secret. The key is created on the host and never leaves it; the certificate lasts 24 hours and renews itself after 16. The agent only dials out (port 8444). If the agent is revoked, its identity is damaged or its certificate expired while it was offline, it exits with status 78 and systemd does not restart it: run `nux agent enroll --force` with a new token.
 
 ## Project

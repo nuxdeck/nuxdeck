@@ -15,6 +15,7 @@ import (
 
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
 	"github.com/nuxdeck/nuxdeck/internal/agent/enroll"
+	"github.com/nuxdeck/nuxdeck/internal/agent/inventory"
 	agentrun "github.com/nuxdeck/nuxdeck/internal/agent/run"
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 )
@@ -113,6 +114,7 @@ func agentRun(ctx context.Context, args []string, settings cli.Settings, stderr 
 	fs := flag.NewFlagSet("nux agent run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	stateDir := stateDirFlag(fs, getenv)
+	sockSocket := fs.String("sockguard-socket", envOr(getenv, "NUX_SOCKGUARD_SOCKET", defaultSockguardSocket), "nux-sockguard's socket, the agent's only route to Docker and Podman (env NUX_SOCKGUARD_SOCKET)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -124,7 +126,9 @@ func agentRun(ctx context.Context, args []string, settings cli.Settings, stderr 
 	_ = level.UnmarshalText([]byte(settings.LogLevel))
 	log := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
 
-	err := agentrun.Run(ctx, agentrun.Config{StateDir: *stateDir, Version: version, Log: log})
+	inv := inventory.New(inventory.Config{SockguardSocket: *sockSocket, Log: log})
+	go inv.Run(ctx)
+	err := agentrun.Run(ctx, agentrun.Config{StateDir: *stateDir, Version: version, Log: log, Inventory: inv})
 	switch errcode.CodeOf(err) {
 	case "":
 		if err != nil {
@@ -136,4 +140,11 @@ func agentRun(ctx context.Context, args []string, settings cli.Settings, stderr 
 	default:
 		return fail(stderr, err, 1)
 	}
+}
+
+func envOr(getenv func(string) string, key, fallback string) string {
+	if v := getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

@@ -46,6 +46,8 @@ const (
 	SKGUps001    Code = "SKG-UPS-001"
 	SKGUps002    Code = "SKG-UPS-002"
 	SKGSock001   Code = "SKG-SOCK-001"
+	AGTCol001    Code = "AGT-COL-001"
+	AGTCol002    Code = "AGT-COL-002"
 	AGTEnr001    Code = "AGT-ENR-001"
 	AGTEnr002    Code = "AGT-ENR-002"
 	AGTEnr003    Code = "AGT-ENR-003"
@@ -100,6 +102,8 @@ func Entries() []Entry {
 		{SKGUps001, "Container runtime unreachable", "nux-sockguard could not get an answer from the Docker or Podman socket.", "Check that Docker or Podman is running and that nux-sg can read its socket (docker group, or --upstream)."},
 		{SKGUps002, "Container runtime response rejected", "The runtime's answer was too large or not in the expected shape, so it was not forwarded.", "Report the code and the runtime version; the response was dropped rather than passed on unfiltered."},
 		{SKGSock001, "Socket cannot be set up", "nux-sockguard could not create its listening socket.", "Check that the directory exists and belongs to nux-sg, and that the path is not a regular file."},
+		{AGTCol001, "Container inventory unavailable", "The agent cannot read containers through nux-sockguard.", "Check that nux-sockguard is running, that Docker or Podman is running, and that the agent's user is in the nux group."},
+		{AGTCol002, "Host facts incomplete", "The agent could not read some host facts from /proc, /sys or /etc.", "Check that the agent's sandbox allows reading them; other facts are still reported."},
 		{AGTEnr001, "Agent already enrolled", "This host already holds an agent identity.", "Run nux agent run, or pass --force to enrol again with a new token."},
 		{AGTEnr002, "Enrolment failed", "nuxd did not accept the enrolment request.", "Create a new token in the UI and run nux agent enroll again."},
 		{AGTEnr003, "Gateway not trusted", "The server's certificate does not chain to the CA fingerprint in the token.", "Check that the token was copied completely and that nothing intercepts the connection to the gateway."},
