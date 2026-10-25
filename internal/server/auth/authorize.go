@@ -20,6 +20,7 @@ const (
 	ActionLogout           Action = "auth.logout"
 	ActionMeRead           Action = "me.read"
 	ActionAgentTokenCreate Action = "agents.token.create" //nolint:gosec // an action name, not a credential
+	ActionAgentRevoke      Action = "agents.revoke"
 )
 
 // Principal is the caller. The zero value is anonymous.
@@ -53,6 +54,7 @@ var rules = map[Action]requirement{
 	ActionLogout:           signedIn,
 	ActionMeRead:           signedIn,
 	ActionAgentTokenCreate: admin,
+	ActionAgentRevoke:      admin,
 }
 
 // Authorize returns nil if p may perform a, and an AUTH-DENY error otherwise.

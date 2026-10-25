@@ -3,11 +3,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
@@ -64,5 +67,60 @@ func TestCreateTokenValidation(t *testing.T) {
 		if rec.Code != http.StatusUnprocessableEntity && rec.Code != http.StatusBadRequest || errCode(t, rec) != "API-VAL-001" {
 			t.Errorf("%s: %d %q", name, rec.Code, rec.Body)
 		}
+	}
+}
+
+type fakeRevoker struct {
+	mu      sync.Mutex
+	revoked []string
+	actors  []gateway.Actor
+}
+
+func (f *fakeRevoker) Revoke(_ context.Context, actor gateway.Actor, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == unknownAgent {
+		return gateway.ErrAgentNotFound
+	}
+	f.revoked = append(f.revoked, id)
+	f.actors = append(f.actors, actor)
+	return nil
+}
+
+const (
+	knownAgent   = "01HZ0000000000000000000001"
+	unknownAgent = "01HZ0000000000000000000002"
+)
+
+func TestAGT4_RevokeEndpoint(t *testing.T) {
+	e := newAuthEnv(t)
+	path := func(id string) string { return "/api/v1/agents/" + id + "/revoke" }
+
+	if rec := e.do(req{method: "POST", path: path(knownAgent)}); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous: %d %q", rec.Code, rec.Body)
+	}
+	signedIn := e.setup()
+	cookie, csrf := sessionCookieOf(t, signedIn), csrfOf(t, signedIn)
+	h := map[string]string{csrfHeader: csrf}
+
+	if rec := e.do(req{method: "POST", path: path(knownAgent), cookie: cookie}); rec.Code != http.StatusForbidden || errCode(t, rec) != "AUTH-DENY-004" {
+		t.Errorf("no CSRF token: %d %q", rec.Code, rec.Body)
+	}
+	if rec := e.do(req{method: "POST", path: path("not-an-id"), cookie: cookie, headers: h}); rec.Code != http.StatusNotFound {
+		t.Errorf("malformed id: %d %q", rec.Code, rec.Body)
+	}
+	if rec := e.do(req{method: "POST", path: path(unknownAgent), cookie: cookie, headers: h}); rec.Code != http.StatusNotFound || errCode(t, rec) != "API-NF-001" {
+		t.Errorf("unknown agent: %d %q", rec.Code, rec.Body)
+	}
+	if len(e.revoker.revoked) != 0 {
+		t.Fatalf("revoked %v before any valid request", e.revoker.revoked)
+	}
+
+	rec := e.do(req{method: "POST", path: path(knownAgent), cookie: cookie, headers: h})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke = %d %q", rec.Code, rec.Body)
+	}
+	if len(e.revoker.revoked) != 1 || e.revoker.revoked[0] != knownAgent || e.revoker.actors[0].UserID == "" {
+		t.Errorf("revoker saw %v by %v", e.revoker.revoked, e.revoker.actors)
 	}
 }

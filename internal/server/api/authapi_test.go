@@ -44,11 +44,12 @@ func (l *syncLog) String() string {
 }
 
 type authEnv struct {
-	t     *testing.T
-	h     http.Handler
-	db    *store.Store
-	token *auth.SetupToken
-	logs  *syncLog
+	t       *testing.T
+	h       http.Handler
+	db      *store.Store
+	token   *auth.SetupToken
+	logs    *syncLog
+	revoker *fakeRevoker
 }
 
 func newAuthEnv(t *testing.T) *authEnv {
@@ -77,9 +78,10 @@ func newAuthEnv(t *testing.T) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rv := &fakeRevoker{}
 	return &authEnv{
-		t: t, db: db, token: token, logs: logs,
-		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pki.NewService(db, ca), GatewayURL: "https://nux.example.com:8444"}),
+		t: t, db: db, token: token, logs: logs, revoker: rv,
+		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pki.NewService(db, ca), GatewayURL: "https://nux.example.com:8444", Revoker: rv}),
 	}
 }
 

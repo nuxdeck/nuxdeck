@@ -36,6 +36,12 @@ const (
 	GWTok001     Code = "GW-TOK-001" //nolint:gosec // an error code, not a credential
 	GWCSR001     Code = "GW-CSR-001"
 	GWCA001      Code = "GW-CA-001"
+	GWAuth001    Code = "GW-AUTH-001"
+	GWRate001    Code = "GW-RATE-001"
+	GWStr001     Code = "GW-STR-001"
+	GWStr002     Code = "GW-STR-002"
+	GWStr003     Code = "GW-STR-003"
+	GWStr004     Code = "GW-STR-004"
 	CLIArg001    Code = "CLI-ARG-001"
 	CLIArg002    Code = "CLI-ARG-002"
 	CLIArg003    Code = "CLI-ARG-003"
@@ -74,6 +80,12 @@ func Entries() []Entry {
 		{GWTok001, "Enrolment token not accepted", "The enrolment token is unknown, expired or already used.", "Create a new token in the UI; each token works once and expires after 1 hour."},
 		{GWCSR001, "Certificate request rejected", "The certificate signing request is malformed or uses an unsupported key.", "Update the agent, which generates an ECDSA P-256 key and signs the request itself."},
 		{GWCA001, "Agent CA unavailable", "The internal certificate authority could not be loaded or created.", "Check that the pki directory in the data directory is readable by nuxd and that ca.crt and ca.key belong together."},
+		{GWAuth001, "Agent certificate not accepted", "The agent certificate is unknown, revoked or does not identify an agent.", "Enrol the host again with a new token."},
+		{GWRate001, "Too many enrolment attempts", "Too many failed enrolment attempts from this address.", "Wait a few minutes and try again with a valid token."},
+		{GWStr001, "Agent stream protocol error", "The first message on an agent stream must be Hello, sent promptly.", "Update the agent to a version that speaks protocol v1."},
+		{GWStr002, "Agent message too large", "An agent message exceeded the 4 MB limit.", "Update the agent; metric batches are split to stay under 1 MB."},
+		{GWStr003, "Replaced by a newer connection", "The same agent connected again, so the older stream was closed.", "Make sure only one agent runs per host."},
+		{GWStr004, "Agent heartbeats missed", "No heartbeat arrived for three intervals, so the stream was closed.", "Check the network path between the agent and nuxd."},
 		{CLIArg001, "Unknown or missing command", "The command is missing or not recognised.", "Run nux without arguments to list the commands."},
 		{CLIArg002, "Invalid command-line argument", "A flag or argument is not valid.", "Check the usage text for the command."},
 		{CLIArg003, "Command not implemented yet", "This command is a placeholder in this version.", "Update nux, or see the roadmap for when it arrives."},

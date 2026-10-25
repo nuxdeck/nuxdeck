@@ -55,6 +55,8 @@ type TLS struct {
 
 // Gateway configures how agents reach nuxd.
 type Gateway struct {
+	// Addr is where the agent gateway listens.
+	Addr string `yaml:"addr"`
 	// PublicURL is the https URL agents dial (port 8444), embedded in enrolment tokens.
 	// Empty means https://<host name of this machine>:8444.
 	PublicURL string `yaml:"public_url"`
@@ -65,6 +67,7 @@ func Defaults() Config {
 	return Config{
 		DataDir: "/var/lib/nuxd",
 		Log:     Log{Level: "info"},
+		Gateway: Gateway{Addr: ":8444"},
 		HTTP:    HTTP{HTTPSAddr: ":8443", RedirectAddr: ":8080"},
 	}
 }
@@ -117,6 +120,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	set(&cfg.HTTP.RedirectAddr, "NUXD_REDIRECT_ADDR")
 	set(&cfg.TLS.CertFile, "NUXD_TLS_CERT_FILE")
 	set(&cfg.TLS.KeyFile, "NUXD_TLS_KEY_FILE")
+	set(&cfg.Gateway.Addr, "NUXD_GATEWAY_ADDR")
 	set(&cfg.Gateway.PublicURL, "NUXD_GATEWAY_PUBLIC_URL")
 
 	if v := getenv("NUXD_TLS_HOSTNAMES"); v != "" {
@@ -140,7 +144,7 @@ func (c Config) Validate() error {
 	default:
 		return errcode.New(errcode.SRVCfg002, "log.level must be debug, info, warn or error, got %q", c.Log.Level)
 	}
-	for name, addr := range map[string]string{"http.https_addr": c.HTTP.HTTPSAddr, "http.redirect_addr": c.HTTP.RedirectAddr} {
+	for name, addr := range map[string]string{"http.https_addr": c.HTTP.HTTPSAddr, "http.redirect_addr": c.HTTP.RedirectAddr, "gateway.addr": c.Gateway.Addr} {
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			return errcode.New(errcode.SRVCfg002, "%s must be host:port, got %q", name, addr)
 		}

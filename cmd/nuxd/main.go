@@ -12,9 +12,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
+	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
@@ -116,21 +119,57 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return err
 	}
+	gwURL := gatewayURL(cfg.Gateway.PublicURL)
+	pkiSvc := pki.NewService(db, ca)
+	gw, err := gateway.New(ctx, gateway.Options{
+		Log: log, Repo: db, Enroller: pkiSvc, CA: ca,
+		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
+	})
+	if err != nil {
+		return err
+	}
 	handler := api.Handler(api.Options{
 		Log: log, Ready: db, Version: version, UI: ui, Auth: svc,
-		PKI: pki.NewService(db, ca), GatewayURL: gatewayURL(cfg.Gateway.PublicURL),
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw,
 	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
 		return err
 	}
+	gwLn, err := gateway.Listen(cfg.Gateway.Addr)
+	if err != nil {
+		return err
+	}
 
 	log.Info("nuxd started", "version", version, "https_addr", srv.HTTPSAddr(), "redirect_addr", srv.RedirectAddr(), "data_dir", cfg.DataDir)
-	if err := srv.Serve(ctx); err != nil {
+	log.Info("agent gateway listening", "addr", gwLn.Addr().String(), "public_url", gwURL)
+	if err := serveAll(ctx, srv, gw, gwLn); err != nil {
 		return err
 	}
 	log.Info("nuxd stopped")
 	return nil
+}
+
+// serveAll runs the web server and the agent gateway; when either stops, so does the other.
+func serveAll(ctx context.Context, srv *api.Server, gw *gateway.Gateway, gwLn net.Listener) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() { errs <- srv.Serve(ctx) }()
+	go func() { errs <- gw.Serve(ctx, gwLn) }()
+	first := <-errs
+	cancel()
+	return errors.Join(first, <-errs)
+}
+
+// gatewayHosts lists the names and addresses the gateway certificate must cover.
+func gatewayHosts(publicURL string, configured []string) []string {
+	hosts := append([]string{"localhost"}, configured...)
+	if u, err := url.Parse(publicURL); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, u.Hostname())
+	}
+	slices.Sort(hosts)
+	return slices.Compact(hosts)
 }
 
 // gatewayURL is the address embedded in enrolment tokens: the configured public

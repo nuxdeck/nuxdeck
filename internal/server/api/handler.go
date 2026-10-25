@@ -15,12 +15,18 @@ import (
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
 // Readiness reports whether a dependency is usable.
 type Readiness interface {
 	Ping(ctx context.Context) error
+}
+
+// Revoker ends an agent's access and closes its stream; *gateway.Gateway implements it.
+type Revoker interface {
+	Revoke(ctx context.Context, actor gateway.Actor, agentID string) error
 }
 
 // Options are the handler's dependencies.
@@ -36,6 +42,8 @@ type Options struct {
 	// embedded in every token.
 	PKI        *pki.Service
 	GatewayURL string
+	// Revoker enables agent revocation; it needs Auth.
+	Revoker Revoker
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -58,7 +66,7 @@ func Handler(o Options) http.Handler {
 		a := &authAPI{svc: o.Auth, log: o.Log}
 		a.register(mux)
 		if o.PKI != nil {
-			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL}).register(mux)
+			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL, revoker: o.Revoker}).register(mux)
 		}
 	}
 

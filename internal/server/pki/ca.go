@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
@@ -221,4 +222,15 @@ func checkCSR(der []byte) (crypto.PublicKey, error) {
 
 func newSerial() (*big.Int, error) {
 	return rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
+}
+
+// AgentIDFromCert returns the agent ID a certificate issued by Sign names.
+func AgentIDFromCert(cert *x509.Certificate) (string, bool) {
+	const prefix = "nuxdeck:agent:"
+	for _, u := range cert.URIs {
+		if id, ok := strings.CutPrefix(u.Opaque, prefix); ok && u.Scheme == "urn" && id != "" && id == cert.Subject.CommonName {
+			return id, true
+		}
+	}
+	return "", false
 }
