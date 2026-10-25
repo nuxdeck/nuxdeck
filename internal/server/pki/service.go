@@ -39,10 +39,21 @@ type TokenRecord struct {
 	ExpiresAt  time.Time
 }
 
+// ErrAgentUnavailable is returned by a Repository when an agent is unknown or revoked.
+var ErrAgentUnavailable = errors.New("agent unknown or revoked")
+
+// CertRecord is an issued agent certificate.
+type CertRecord struct {
+	Serial   string
+	IssuedAt time.Time
+	NotAfter time.Time
+}
+
 // AgentRecord is the agent created when a token is redeemed.
 type AgentRecord struct {
 	ID         string
 	CertSerial string
+	NotAfter   time.Time
 	Hostname   string
 	OS         string
 	Arch       string
@@ -65,6 +76,11 @@ type Repository interface {
 	// If redeem fails nothing is kept and the token stays unused. It returns ErrTokenInvalid
 	// for an unknown, expired or used token.
 	RedeemEnrollmentToken(ctx context.Context, hash string, now time.Time, redeem func(tokenID, labelsJSON string) (Redemption, error)) error
+	// RenewAgentCertificate calls issue for an agent that exists and is not revoked, then records the
+	// new certificate as the agent's current one and appends the event, all in one transaction. Earlier
+	// certificates stay on record so revoking the agent can deny every one of them. It returns
+	// ErrAgentUnavailable for an unknown or revoked agent.
+	RenewAgentCertificate(ctx context.Context, agentID string, issue func() (CertRecord, audit.Event, error)) error
 	// RecordAudit appends an event that changes nothing else.
 	RecordAudit(ctx context.Context, ev audit.Event) error
 }
@@ -201,7 +217,7 @@ func (s *Service) Enroll(ctx context.Context, req EnrollRequest) (*Enrollment, e
 		}
 		out = &Enrollment{AgentID: agentID, CertDER: issued.DER, CACertDER: s.ca.CertDER(), RenewAfter: now.Add(RenewAfter)}
 		return Redemption{
-			Agent: AgentRecord{ID: agentID, CertSerial: issued.Serial, Hostname: req.Hostname, OS: req.OS, Arch: req.Arch, Version: req.Version, EnrolledAt: now},
+			Agent: AgentRecord{ID: agentID, CertSerial: issued.Serial, NotAfter: issued.NotAfter, Hostname: req.Hostname, OS: req.OS, Arch: req.Arch, Version: req.Version, EnrolledAt: now},
 			Event: audit.Event{
 				ActorType: "agent", ActorID: agentID, Action: "agent.enroll",
 				TargetType: "agent", TargetID: agentID, IP: req.IP, Result: audit.ResultSuccess,
@@ -253,4 +269,46 @@ func nonNil(m map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return m
+}
+
+// RenewRequest is an agent asking, over its authenticated stream, for a fresh certificate.
+type RenewRequest struct {
+	AgentID string
+	CSRDER  []byte
+	IP      string
+}
+
+// Renewal is the replacement certificate.
+type Renewal struct {
+	CertDER    []byte
+	RenewAfter time.Time
+}
+
+// Renew signs a new certificate for an authenticated agent. The new key comes from the
+// request, so each renewal rotates the agent's key.
+func (s *Service) Renew(ctx context.Context, req RenewRequest) (*Renewal, error) {
+	if _, err := checkCSR(req.CSRDER); err != nil {
+		return nil, err
+	}
+	now := s.now()
+	var out *Renewal
+	err := s.repo.RenewAgentCertificate(ctx, req.AgentID, func() (CertRecord, audit.Event, error) {
+		issued, err := s.ca.Sign(req.CSRDER, req.AgentID, now, CertTTL)
+		if err != nil {
+			return CertRecord{}, audit.Event{}, err
+		}
+		out = &Renewal{CertDER: issued.DER, RenewAfter: now.Add(RenewAfter)}
+		return CertRecord{Serial: issued.Serial, IssuedAt: now, NotAfter: issued.NotAfter}, audit.Event{
+			ActorType: "agent", ActorID: req.AgentID, Action: "agent.cert.renew",
+			TargetType: "agent", TargetID: req.AgentID, IP: req.IP, Result: audit.ResultSuccess,
+			Details: map[string]any{"cert_serial": issued.Serial},
+		}, nil
+	})
+	if errors.Is(err, ErrAgentUnavailable) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("renew agent certificate: %w", err)
+	}
+	return out, nil
 }

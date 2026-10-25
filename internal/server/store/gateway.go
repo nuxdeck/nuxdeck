@@ -27,9 +27,9 @@ func (s *Store) AgentByID(ctx context.Context, id string) (gateway.AgentInfo, er
 	return info, err
 }
 
-// RevokedSerials lists the certificate serials of revoked agents.
+// RevokedSerials lists every certificate serial ever issued to a revoked agent.
 func (s *Store) RevokedSerials(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT cert_serial FROM agents WHERE revoked_at IS NOT NULL`)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.serial FROM agent_certs c JOIN agents a ON a.id = c.agent_id WHERE a.revoked_at IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -45,16 +45,33 @@ func (s *Store) RevokedSerials(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// RevokeAgent marks an agent revoked and audits it in one transaction.
-func (s *Store) RevokeAgent(ctx context.Context, id string, at time.Time, ev audit.Event) (serial string, changed bool, err error) {
+// RevokeAgent marks an agent revoked and audits it in one transaction. It returns every
+// certificate serial the agent was ever issued.
+func (s *Store) RevokeAgent(ctx context.Context, id string, at time.Time, ev audit.Event) (serials []string, changed bool, err error) {
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		var revokedAt sql.NullInt64
-		err := tx.QueryRowContext(ctx, `SELECT cert_serial, revoked_at FROM agents WHERE id = ?`, id).Scan(&serial, &revokedAt)
+		var current string
+		err := tx.QueryRowContext(ctx, `SELECT cert_serial, revoked_at FROM agents WHERE id = ?`, id).Scan(&current, &revokedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			return gateway.ErrAgentNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("find agent: %w", err)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT serial FROM agent_certs WHERE agent_id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("list agent certificates: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var serial string
+			if err := rows.Scan(&serial); err != nil {
+				return err
+			}
+			serials = append(serials, serial)
+		}
+		if err := rows.Err(); err != nil {
+			return err
 		}
 		if revokedAt.Valid {
 			return nil
@@ -63,10 +80,10 @@ func (s *Store) RevokeAgent(ctx context.Context, id string, at time.Time, ev aud
 			return fmt.Errorf("revoke agent: %w", err)
 		}
 		changed = true
-		ev.Details = map[string]any{"cert_serial": serial}
+		ev.Details = map[string]any{"cert_serials": serials}
 		return s.appendAudit(ctx, tx, ev)
 	})
-	return serial, changed, err
+	return serials, changed, err
 }
 
 // TouchAgent records when the agent was last heard from.

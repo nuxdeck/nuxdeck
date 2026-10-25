@@ -64,9 +64,10 @@ type Repository interface {
 	AgentByID(ctx context.Context, id string) (AgentInfo, error)
 	// RevokedSerials lists the certificate serials of every revoked agent, for the deny list.
 	RevokedSerials(ctx context.Context) ([]string, error)
-	// RevokeAgent sets revoked_at and appends ev in one transaction. changed is false when the
+	// RevokeAgent sets revoked_at and appends ev in one transaction, returning every certificate
+	// serial the agent was issued. changed is false when the
 	// agent was already revoked, in which case nothing is written.
-	RevokeAgent(ctx context.Context, id string, at time.Time, ev audit.Event) (serial string, changed bool, err error)
+	RevokeAgent(ctx context.Context, id string, at time.Time, ev audit.Event) (serials []string, changed bool, err error)
 	TouchAgent(ctx context.Context, id string, at time.Time) error
 }
 
@@ -75,11 +76,17 @@ type Enroller interface {
 	Enroll(ctx context.Context, req pki.EnrollRequest) (*pki.Enrollment, error)
 }
 
+// Renewer signs replacement certificates; *pki.Service implements it.
+type Renewer interface {
+	Renew(ctx context.Context, req pki.RenewRequest) (*pki.Renewal, error)
+}
+
 // Options are the gateway's dependencies.
 type Options struct {
 	Log      *slog.Logger
 	Repo     Repository
 	Enroller Enroller
+	Renewer  Renewer
 	CA       *pki.CA
 	// ServerCert supplies the gateway's TLS certificate, normally pki.ServerCerts.GetCertificate.
 	ServerCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)

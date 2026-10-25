@@ -50,6 +50,18 @@ The script (`deploy/install/install.sh`) downloads the release, verifies the cos
 
 First start creates the data directory (mode 0700), `nux.db` and a self-signed certificate. Settings layer in this order: built-in defaults, the YAML file (`--config`, default `/etc/nuxd/nuxd.yaml`), then `NUXD_*` environment variables (`NUXD_DATA_DIR`, `NUXD_LOG_LEVEL`, `NUXD_HTTPS_ADDR`, `NUXD_REDIRECT_ADDR`, `NUXD_TLS_CERT_FILE`, `NUXD_TLS_KEY_FILE`, `NUXD_TLS_HOSTNAMES`, `NUXD_GATEWAY_ADDR`, `NUXD_GATEWAY_PUBLIC_URL`). First start also creates the agent CA in `pki/` (`ca.key` mode 0600); the agent gateway listens on `NUXD_GATEWAY_ADDR` (default `:8444`) with a certificate signed by that CA, so open port 8444 to your agents; `NUXD_GATEWAY_PUBLIC_URL` is the https address agents dial, embedded in enrolment tokens (default `https://<hostname>:8444`). In a container the data directory must be a named volume or a directory owned by uid 65532. The HTTP-to-HTTPS redirect assumes the HTTPS port is published unchanged (`-p 8443:8443`).
 
+## Add a host
+
+An admin creates a single-use token (valid 1 hour) with `POST /api/v1/agents/tokens`; the UI screen arrives with NUX-17. On the host:
+
+```sh
+echo "$TOKEN" > token.txt   # or set NUX_ENROLL_TOKEN; --token exposes it in the process list
+sudo -u nux nux agent enroll --token-file token.txt
+sudo install -m 0644 deploy/systemd/nux-agent.service /etc/systemd/system/ && sudo systemctl enable --now nux-agent
+```
+
+The token carries the gateway address and the CA fingerprint, so the agent verifies `nuxd` before it sends the secret. The key is created on the host and never leaves it; the certificate lasts 24 hours and renews itself after 16. The agent only dials out (port 8444). If the agent is revoked, its identity is damaged or its certificate expired while it was offline, it exits with status 78 and systemd does not restart it: run `nux agent enroll --force` with a new token.
+
 ## Project
 
 - [Roadmap](docs/07-roadmap.md) · [Architecture](docs/03-architecture.md) · [Security](docs/04-security.md)

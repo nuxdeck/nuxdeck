@@ -4,3 +4,4 @@ ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/nux /usr/local/bin/nux
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/nux", "agent"]
+CMD ["run"]

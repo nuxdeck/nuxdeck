@@ -40,6 +40,7 @@ type presence struct {
 
 type env struct {
 	t        *testing.T
+	dir      string
 	db       *store.Store
 	ca       *pki.CA
 	pki      *pki.Service
@@ -70,14 +71,14 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, db: db, ca: ca, pki: pki.NewService(db, ca), events: make(chan presence, 64), gwStoped: make(chan struct{})}
+	e := &env{t: t, dir: dir, db: db, ca: ca, pki: pki.NewService(db, ca), events: make(chan presence, 64), gwStoped: make(chan struct{})}
 
 	var repo gateway.Repository = db
 	if wrap != nil {
 		repo = wrap(db)
 	}
 	e.gw, err = gateway.New(context.Background(), gateway.Options{
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: repo, Enroller: e.pki, CA: ca,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: repo, Enroller: e.pki, Renewer: e.pki, CA: ca,
 		ServerCert: ca.ServerCertificates([]string{"localhost", "127.0.0.1"}).GetCertificate,
 		Heartbeat:  beat,
 		OnPresence: func(id string, online bool) { e.events <- presence{id, online} },
@@ -472,7 +473,7 @@ func TestAGT4_DenyListSurvivesRestart(t *testing.T) {
 
 	// A gateway built afterwards must load the deny list from the database.
 	restarted, err := gateway.New(context.Background(), gateway.Options{
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: hidesRevocation{e.db}, Enroller: e.pki, CA: e.ca,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: hidesRevocation{e.db}, Enroller: e.pki, Renewer: e.pki, CA: e.ca,
 		ServerCert: e.ca.ServerCertificates([]string{"localhost", "127.0.0.1"}).GetCertificate, Heartbeat: beat,
 	})
 	if err != nil {

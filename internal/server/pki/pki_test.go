@@ -421,3 +421,59 @@ func TestParseTokenRejectsMalformedShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestAGT4_RenewSignsANewCertificateForTheSameAgent(t *testing.T) {
+	e := newEnv(t)
+	first, err := e.enroll(e.token(pki.TokenRequest{}), csr(t, &x509.CertificateRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := e.db.VerifyAuditChain(context.Background())
+
+	e.now.Add(int64((16 * time.Hour) / time.Millisecond))
+	got, err := e.svc.Renew(context.Background(), pki.RenewRequest{AgentID: first.AgentID, CSRDER: csr(t, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "admin"}}), IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(got.CertDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := x509.ParseCertificate(first.CertDER)
+	if cert.Subject.CommonName != first.AgentID || cert.SerialNumber.Cmp(old.SerialNumber) == 0 {
+		t.Errorf("renewed certificate: CN %q serial %v (old %v)", cert.Subject.CommonName, cert.SerialNumber, old.SerialNumber)
+	}
+	if got.RenewAfter.Sub(e.clock()) != pki.RenewAfter {
+		t.Errorf("renew after %v from now, want %v", got.RenewAfter.Sub(e.clock()), pki.RenewAfter)
+	}
+	if n, err := e.db.VerifyAuditChain(context.Background()); err != nil || n != base+1 {
+		t.Errorf("audit chain %d entries (want %d), %v", n, base+1, err)
+	}
+}
+
+func TestRenewRefusesRevokedUnknownAndBadRequests(t *testing.T) {
+	e := newEnv(t)
+	a, err := e.enroll(e.token(pki.TokenRequest{}), csr(t, &x509.CertificateRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := csr(t, &x509.CertificateRequest{})
+
+	if _, err := e.svc.Renew(context.Background(), pki.RenewRequest{AgentID: a.AgentID, CSRDER: []byte("junk")}); errcode.CodeOf(err) != errcode.GWCSR001 {
+		t.Errorf("bad CSR: %v", err)
+	}
+	if _, err := e.svc.Renew(context.Background(), pki.RenewRequest{AgentID: "01HZZZZZZZZZZZZZZZZZZZZZZZ", CSRDER: good}); !errors.Is(err, pki.ErrAgentUnavailable) {
+		t.Errorf("unknown agent: %v", err)
+	}
+
+	if _, _, err := e.db.RevokeAgent(context.Background(), a.AgentID, e.clock(), audit.Event{ActorType: "user", ActorID: "01ADMIN", Action: "agent.revoke", Result: audit.ResultSuccess}); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := e.db.VerifyAuditChain(context.Background())
+	if _, err := e.svc.Renew(context.Background(), pki.RenewRequest{AgentID: a.AgentID, CSRDER: good}); !errors.Is(err, pki.ErrAgentUnavailable) {
+		t.Errorf("revoked agent: %v", err)
+	}
+	if n, _ := e.db.VerifyAuditChain(context.Background()); n != base {
+		t.Error("a refused renewal must not leave an audit entry or a certificate behind")
+	}
+}

@@ -22,7 +22,8 @@ const (
 
 // ServerCerts supplies the gateway's TLS certificate. It is signed by the agent
 // CA, so an agent that pinned the CA fingerprint from its token can verify the
-// server (AGT-3). The key is generated in memory and replaced before expiry.
+// server (AGT-3); the CA certificate is sent in the chain so the agent can match it to the
+// fingerprint before it sends any secret. The key is generated in memory and replaced before expiry.
 type ServerCerts struct {
 	ca    *CA
 	hosts []string
@@ -86,5 +87,5 @@ func (s *ServerCerts) issue(now time.Time) (*tls.Certificate, time.Time, error) 
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("sign gateway certificate: %w", err)
 	}
-	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, tmpl.NotAfter, nil
+	return &tls.Certificate{Certificate: [][]byte{der, s.ca.cert.Raw}, PrivateKey: key}, tmpl.NotAfter, nil
 }

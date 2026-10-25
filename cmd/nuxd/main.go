@@ -122,7 +122,7 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	gwURL := gatewayURL(cfg.Gateway.PublicURL)
 	pkiSvc := pki.NewService(db, ca)
 	gw, err := gateway.New(ctx, gateway.Options{
-		Log: log, Repo: db, Enroller: pkiSvc, CA: ca,
+		Log: log, Repo: db, Enroller: pkiSvc, Renewer: pkiSvc, CA: ca,
 		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
 	})
 	if err != nil {

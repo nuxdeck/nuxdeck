@@ -4,12 +4,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
@@ -26,17 +29,20 @@ const usage = `Usage: nux [flags] <command>
 
 Commands:
   version   print the nux version
-  agent     run the host agent (not implemented yet)
+  agent     enrol this host and run the host agent (nux agent enroll | run)
   login     sign in to nuxd (not implemented yet)
 
 Flags:
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv)
+	stop()
+	os.Exit(code)
 }
 
-func run(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	var flags cli.Flags
 	fs := flag.NewFlagSet("nux", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -61,7 +67,13 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "version":
 		_, _ = fmt.Fprintf(stdout, "nux %s (commit %s, built %s) %s/%s %s\n", version, commit, date, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return 0
-	case "agent", "login":
+	case "agent":
+		settings, err := cli.Resolve(flags, getenv, os.UserConfigDir)
+		if err != nil {
+			return fail(stderr, err, 2)
+		}
+		return runAgent(ctx, fs.Args()[1:], settings, stdin, stdout, stderr, getenv)
+	case "login":
 		if _, err := cli.Resolve(flags, getenv, os.UserConfigDir); err != nil {
 			return fail(stderr, err, 2)
 		}

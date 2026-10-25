@@ -30,14 +30,14 @@ type Actor struct {
 // handshake refuses it from now on, and any live stream is closed at once (AGT-4).
 // Revoking twice is harmless.
 func (g *Gateway) Revoke(ctx context.Context, actor Actor, agentID string) error {
-	serial, changed, err := g.o.Repo.RevokeAgent(ctx, agentID, g.o.Now(), audit.Event{
+	serials, changed, err := g.o.Repo.RevokeAgent(ctx, agentID, g.o.Now(), audit.Event{
 		ActorType: "user", ActorID: actor.UserID, Action: "agent.revoke",
 		TargetType: "agent", TargetID: agentID, IP: actor.IP, Result: audit.ResultSuccess,
 	})
 	if err != nil {
 		return err
 	}
-	g.deny.add(serial)
+	g.deny.add(serials...)
 	if s := g.reg.get(agentID); s != nil {
 		s.close(reasonRevoked)
 	}
@@ -140,6 +140,10 @@ func (g *Gateway) Connect(stream grpc.BidiStreamingServer[agentv1.AgentMessage, 
 				}
 			case *agentv1.AgentMessage_Hello:
 				return g.reject(stream, reasonProtocol)
+			case *agentv1.AgentMessage_Renew:
+				if err := g.renew(ctx, stream, agentID, m.GetRenew()); err != nil {
+					return err
+				}
 			default:
 				// Inventory, metrics and logs are consumed by modules that land later (NUX-16, 21, 24).
 			}
@@ -226,4 +230,22 @@ func streamEnd(err error) error {
 		return nil
 	}
 	return err
+}
+
+// renew answers a RenewRequest on the live stream. A request from an agent that was revoked
+// in the meantime, or one with an unusable CSR, ends the stream.
+func (g *Gateway) renew(ctx context.Context, stream grpc.BidiStreamingServer[agentv1.AgentMessage, agentv1.ServerMessage], agentID string, in *agentv1.RenewRequest) error {
+	res, err := g.o.Renewer.Renew(ctx, pki.RenewRequest{AgentID: agentID, CSRDER: in.GetCsrDer(), IP: peerIP(ctx)})
+	switch {
+	case errors.Is(err, pki.ErrAgentUnavailable):
+		return g.reject(stream, reasonRevoked)
+	case errcode.CodeOf(err) == errcode.GWCSR001:
+		return g.reject(stream, closeReason{agentv1.Disconnect_REASON_PROTOCOL_ERROR, errcode.GWCSR001})
+	case err != nil:
+		g.log.Error("renew agent certificate", "agent_id", agentID, "error", err)
+		return status.Error(codes.Internal, string(errcode.APIInt001))
+	}
+	return stream.Send(&agentv1.ServerMessage{Body: &agentv1.ServerMessage_Renew{Renew: &agentv1.RenewResponse{
+		CertDer: res.CertDER, RenewAfterUnix: res.RenewAfter.Unix(),
+	}}})
 }

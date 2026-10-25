@@ -60,6 +60,37 @@ func (s *Store) RedeemEnrollmentToken(ctx context.Context, hash string, now time
 			a.ID, id, a.CertSerial, a.Hostname, a.OS, a.Arch, a.Version, labels, a.EnrolledAt.UnixMilli()); err != nil {
 			return fmt.Errorf("insert agent: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_certs (serial, agent_id, issued_at, not_after) VALUES (?, ?, ?, ?)`,
+			a.CertSerial, a.ID, a.EnrolledAt.UnixMilli(), a.NotAfter.UnixMilli()); err != nil {
+			return fmt.Errorf("record agent certificate: %w", err)
+		}
 		return s.appendAudit(ctx, tx, r.Event)
+	})
+}
+
+// RenewAgentCertificate records a replacement certificate for a live agent and audits it atomically.
+func (s *Store) RenewAgentCertificate(ctx context.Context, agentID string, issue func() (pki.CertRecord, audit.Event, error)) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var revoked sql.NullInt64
+		var current string
+		err := tx.QueryRowContext(ctx, `SELECT cert_serial, revoked_at FROM agents WHERE id = ?`, agentID).Scan(&current, &revoked)
+		if errors.Is(err, sql.ErrNoRows) || revoked.Valid {
+			return pki.ErrAgentUnavailable
+		}
+		if err != nil {
+			return fmt.Errorf("find agent: %w", err)
+		}
+		rec, ev, err := issue()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_certs (serial, agent_id, issued_at, not_after) VALUES (?, ?, ?, ?)`,
+			rec.Serial, agentID, rec.IssuedAt.UnixMilli(), rec.NotAfter.UnixMilli()); err != nil {
+			return fmt.Errorf("record agent certificate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agents SET cert_serial = ? WHERE id = ?`, rec.Serial, agentID); err != nil {
+			return fmt.Errorf("update agent certificate: %w", err)
+		}
+		return s.appendAudit(ctx, tx, ev)
 	})
 }

@@ -1,0 +1,54 @@
+[Unit]
+Description=Nux Deck agent
+Documentation=https://github.com/nuxdeck/nuxdeck
+After=network-online.target
+Wants=network-online.target
+# Container data arrives through nux-sockguard (NUX-26); the agent never touches the container socket itself.
+ConditionPathExists=/var/lib/nux-agent/agent.json
+
+[Service]
+Type=simple
+User=nux
+Group=nux
+ExecStart=/usr/local/bin/nux agent run
+Restart=on-failure
+RestartSec=5s
+# Exit 78 means revoked, damaged identity or expired certificate: retrying cannot help, enrol again.
+RestartPreventExitStatus=78
+TimeoutStopSec=30s
+
+# /var/lib/nux-agent holds the agent's key and certificate and is owned by the nux user.
+StateDirectory=nux-agent
+StateDirectoryMode=0700
+UMask=0077
+
+# Sandbox: the agent only dials out to nuxd and reads host facts. No Docker or Podman group, no capabilities.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# The collectors read /proc/stat, /proc/meminfo and friends, so the whole of /proc stays visible (not ProcSubset=pid).
+ProtectProc=invisible
+ProcSubset=all
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

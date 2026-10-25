@@ -42,6 +42,12 @@ const (
 	GWStr002     Code = "GW-STR-002"
 	GWStr003     Code = "GW-STR-003"
 	GWStr004     Code = "GW-STR-004"
+	AGTEnr001    Code = "AGT-ENR-001"
+	AGTEnr002    Code = "AGT-ENR-002"
+	AGTEnr003    Code = "AGT-ENR-003"
+	AGTID001     Code = "AGT-ID-001"
+	AGTID002     Code = "AGT-ID-002"
+	AGTRev001    Code = "AGT-REV-001"
 	CLIArg001    Code = "CLI-ARG-001"
 	CLIArg002    Code = "CLI-ARG-002"
 	CLIArg003    Code = "CLI-ARG-003"
@@ -86,6 +92,12 @@ func Entries() []Entry {
 		{GWStr002, "Agent message too large", "An agent message exceeded the 4 MB limit.", "Update the agent; metric batches are split to stay under 1 MB."},
 		{GWStr003, "Replaced by a newer connection", "The same agent connected again, so the older stream was closed.", "Make sure only one agent runs per host."},
 		{GWStr004, "Agent heartbeats missed", "No heartbeat arrived for three intervals, so the stream was closed.", "Check the network path between the agent and nuxd."},
+		{AGTEnr001, "Agent already enrolled", "This host already holds an agent identity.", "Run nux agent run, or pass --force to enrol again with a new token."},
+		{AGTEnr002, "Enrolment failed", "nuxd did not accept the enrolment request.", "Create a new token in the UI and run nux agent enroll again."},
+		{AGTEnr003, "Gateway not trusted", "The server's certificate does not chain to the CA fingerprint in the token.", "Check that the token was copied completely and that nothing intercepts the connection to the gateway."},
+		{AGTID001, "Agent identity unusable", "The agent's key, certificate or identity file is missing or damaged.", "Run nux agent enroll with a new token."},
+		{AGTID002, "Agent certificate expired", "The agent was offline longer than its certificate lives and cannot renew it.", "Run nux agent enroll --force with a new token."},
+		{AGTRev001, "Agent revoked", "nuxd no longer accepts this agent's certificate; it was revoked or removed.", "Run nux agent enroll --force with a new token to bring the host back."},
 		{CLIArg001, "Unknown or missing command", "The command is missing or not recognised.", "Run nux without arguments to list the commands."},
 		{CLIArg002, "Invalid command-line argument", "A flag or argument is not valid.", "Check the usage text for the command."},
 		{CLIArg003, "Command not implemented yet", "This command is a placeholder in this version.", "Update nux, or see the roadmap for when it arrives."},
