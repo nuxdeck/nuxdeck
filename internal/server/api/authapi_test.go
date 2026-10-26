@@ -53,6 +53,7 @@ type authEnv struct {
 	revoker *fakeRevoker
 	pki     *pki.Service
 	inv     *inventory.Service
+	dir     string
 }
 
 func newAuthEnv(t *testing.T) *authEnv {
@@ -88,7 +89,7 @@ func newAuthEnv(t *testing.T) *authEnv {
 		t.Fatal(err)
 	}
 	return &authEnv{
-		t: t, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv,
+		t: t, dir: dir, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv,
 		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pkiSvc, GatewayURL: "https://nux.example.com:8444", Revoker: rv, Inventory: inv}),
 	}
 }

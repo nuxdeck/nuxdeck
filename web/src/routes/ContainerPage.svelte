@@ -4,6 +4,7 @@
   import { formatPort, formatTime } from '../lib/format';
   import { inventory } from '../lib/inventory.svelte';
   import { router } from '../lib/router.svelte';
+  import LogViewer from '../lib/ui/LogViewer.svelte';
   import ItemPage from '../lib/ui/ItemPage.svelte';
   import NotFoundItem from '../lib/ui/NotFoundItem.svelte';
   import StatusBadge from '../lib/ui/StatusBadge.svelte';
@@ -36,7 +37,16 @@
 </script>
 
 {#if container}
-  <ItemPage title={container.name}>
+  <ItemPage
+    title={container.name}
+    item={{
+      kind: 'containers',
+      id: container.id,
+      owner: container.owner,
+      tags: container.tags,
+      etag: container.etag,
+    }}
+  >
     {#snippet crumbs()}<a href="/inventory">Inventory</a> / Container{/snippet}
     {#snippet badges()}
       <StatusBadge status={container.state} />
@@ -99,6 +109,9 @@
           Values that look like secrets are redacted on the host before they reach the server.
         </p>
       {/if}
+    {/snippet}
+    {#snippet logs()}
+      <LogViewer target="container:{container.id}" />
     {/snippet}
   </ItemPage>
 {:else if missing}

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -30,6 +31,15 @@ type Config struct {
 	HTTP    HTTP    `yaml:"http"`
 	TLS     TLS     `yaml:"tls"`
 	Gateway Gateway `yaml:"gateway"`
+	Metrics Metrics `yaml:"metrics"`
+}
+
+// Metrics configures retention of the embedded metrics store (MET-5).
+type Metrics struct {
+	// RetentionDays is how long samples are kept at full resolution.
+	RetentionDays int `yaml:"retention_days"`
+	// DownsampledRetentionDays is how long 5-minute averages are kept; at least RetentionDays.
+	DownsampledRetentionDays int `yaml:"downsampled_retention_days"`
 }
 
 // Log configures structured logging.
@@ -69,6 +79,7 @@ func Defaults() Config {
 		Log:     Log{Level: "info"},
 		Gateway: Gateway{Addr: ":8444"},
 		HTTP:    HTTP{HTTPSAddr: ":8443", RedirectAddr: ":8080"},
+		Metrics: Metrics{RetentionDays: 15, DownsampledRetentionDays: 90},
 	}
 }
 
@@ -122,6 +133,15 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	set(&cfg.TLS.KeyFile, "NUXD_TLS_KEY_FILE")
 	set(&cfg.Gateway.Addr, "NUXD_GATEWAY_ADDR")
 	set(&cfg.Gateway.PublicURL, "NUXD_GATEWAY_PUBLIC_URL")
+	for name, dst := range map[string]*int{"NUXD_METRICS_RETENTION_DAYS": &cfg.Metrics.RetentionDays, "NUXD_METRICS_DOWNSAMPLED_RETENTION_DAYS": &cfg.Metrics.DownsampledRetentionDays} {
+		if v := getenv(name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return errcode.New(errcode.SRVCfg002, "%s must be a whole number of days, got %q", name, v)
+			}
+			*dst = n
+		}
+	}
 
 	if v := getenv("NUXD_TLS_HOSTNAMES"); v != "" {
 		cfg.TLS.Hostnames = nil
@@ -148,6 +168,12 @@ func (c Config) Validate() error {
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			return errcode.New(errcode.SRVCfg002, "%s must be host:port, got %q", name, addr)
 		}
+	}
+	if c.Metrics.RetentionDays < 1 || c.Metrics.RetentionDays > 3650 {
+		return errcode.New(errcode.SRVCfg002, "metrics.retention_days must be from 1 to 3650, got %d", c.Metrics.RetentionDays)
+	}
+	if c.Metrics.DownsampledRetentionDays < c.Metrics.RetentionDays || c.Metrics.DownsampledRetentionDays > 3650 {
+		return errcode.New(errcode.SRVCfg002, "metrics.downsampled_retention_days must be from metrics.retention_days to 3650, got %d", c.Metrics.DownsampledRetentionDays)
 	}
 	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return errcode.New(errcode.SRVCfg002, "tls.cert_file and tls.key_file must be set together")

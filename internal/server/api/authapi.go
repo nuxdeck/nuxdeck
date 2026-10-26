@@ -253,6 +253,10 @@ func (a *authAPI) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErrorDetail(w, http.StatusUnprocessableEntity, code, field, hint)
 	case errcode.APIVal001:
 		writeErrorDetail(w, http.StatusUnprocessableEntity, code, field, hint)
+	case errcode.APIPre001:
+		writeErrorDetail(w, http.StatusPreconditionFailed, code, field, hint)
+	case errcode.APIPre002:
+		writeErrorDetail(w, http.StatusPreconditionRequired, code, field, hint)
 	default:
 		a.log.Error("request failed", "request_id", requestID(r.Context()), "method", r.Method, "path", r.URL.Path, "error", err)
 		writeError(w, http.StatusInternalServerError, errcode.APIInt001)

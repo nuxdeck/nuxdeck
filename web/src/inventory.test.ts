@@ -43,6 +43,8 @@ function host(
       disks: JSON.stringify([{ mount: '/', fstype: 'ext4', total_bytes: 1003753218048 }]),
     },
     owner: '',
+    tags: {},
+    etag: '"h-etag"',
     status,
     first_seen_at: '2026-10-25T10:00:00Z',
     last_seen_at: '2026-10-25T11:00:00Z',
@@ -68,6 +70,9 @@ function ctr(
     state,
     ports: [{ host_ip: '0.0.0.0', host_port: 8080, container_port: 80, protocol: 'tcp' }],
     labels: { app: name, password: '[redacted]' },
+    owner: '',
+    tags: {},
+    etag: '"c-etag"',
     restart_count: 2,
     created_at: '2026-10-24T09:00:00Z',
     gone_at: null,
@@ -475,7 +480,8 @@ describe('item pages', () => {
     const containers = screen.getByRole('table', { name: 'Containers on alpha' });
     expect(within(containers).getByRole('link', { name: 'web' })).toBeTruthy();
     expect(within(containers).queryByText('elsewhere')).toBeNull();
-    expect(screen.getByText(/Tags: none yet/)).toBeTruthy();
+    expect(screen.getByText('Owner')).toBeTruthy();
+    expect(screen.getByText('not set')).toBeTruthy();
   });
 
   it('moves between tabs with the arrow keys and says what is not built yet', async () => {
@@ -496,7 +502,9 @@ describe('item pages', () => {
     const metrics = screen.getByRole('tab', { name: 'Metrics' });
     expect(metrics.getAttribute('aria-selected')).toBe('true');
     expect(document.activeElement).toBe(metrics);
-    expect(screen.getByRole('tabpanel').textContent).toContain('not available in this version yet');
+    expect(
+      within(screen.getByRole('tabpanel')).getByRole('group', { name: 'Time range' }),
+    ).toBeTruthy(); // the charts (NUX-22)
 
     await fireEvent.keyDown(metrics, { key: 'End' });
     expect(screen.getByRole('tab', { name: 'Activity' }).getAttribute('aria-selected')).toBe(

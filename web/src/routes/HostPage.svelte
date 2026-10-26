@@ -4,6 +4,7 @@
   import { bootTimeISO, formatBytes, formatTime, parseDisks } from '../lib/format';
   import { inventory } from '../lib/inventory.svelte';
   import { router } from '../lib/router.svelte';
+  import JournalLogs from '../lib/ui/JournalLogs.svelte';
   import ItemPage from '../lib/ui/ItemPage.svelte';
   import NotFoundItem from '../lib/ui/NotFoundItem.svelte';
   import StatusBadge from '../lib/ui/StatusBadge.svelte';
@@ -36,7 +37,11 @@
 </script>
 
 {#if host}
-  <ItemPage title={host.hostname}>
+  <ItemPage
+    title={host.hostname}
+    item={{ kind: 'hosts', id: host.id, owner: host.owner, tags: host.tags, etag: host.etag }}
+    cpuCount={host.cpu_count}
+  >
     {#snippet crumbs()}<a href="/inventory">Inventory</a> / Host{/snippet}
     {#snippet badges()}<StatusBadge status={host.status} />{/snippet}
     {#snippet overview()}
@@ -121,6 +126,9 @@
           </table>
         </div>
       {/if}
+    {/snippet}
+    {#snippet logs()}
+      <JournalLogs hostId={host.id} />
     {/snippet}
   </ItemPage>
 {:else if missing}

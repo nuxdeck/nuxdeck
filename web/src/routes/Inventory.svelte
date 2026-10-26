@@ -2,34 +2,62 @@
 <script lang="ts">
   import { findSection } from '../lib/router.svelte';
   import { formatTime } from '../lib/format';
+  import type { Container, Host } from '../lib/api/client';
   import { inventory, type LiveStatus } from '../lib/inventory.svelte';
+  import { ENV_KEY, groupByEnv, hasTag, tagOptions, tagText, type Tags } from '../lib/tags';
   import Button from '../lib/ui/Button.svelte';
   import EmptyState from '../lib/ui/EmptyState.svelte';
   import FormError from '../lib/ui/FormError.svelte';
   import Icon from '../lib/ui/Icon.svelte';
+  import TagChips from '../lib/ui/TagChips.svelte';
   import StatusBadge from '../lib/ui/StatusBadge.svelte';
 
   const section = findSection('/inventory');
   let filter = $state('');
 
+  let tagFilter = $state('');
+  let groupByEnvironment = $state(false);
+
   const hostName = $derived(new Map(inventory.hosts.map((h) => [h.id, h.hostname])));
+  const hostById = $derived(new Map(inventory.hosts.map((h) => [h.id, h])));
   const needle = $derived(filter.trim().toLowerCase());
+
+  // A container belongs to its host's environment unless it has an environment of its own.
+  const containerTags = (c: Container): Tags => ({ ...hostById.get(c.host_id)?.tags, ...c.tags });
+  const options = $derived(
+    tagOptions([...inventory.hosts.map((h) => h.tags), ...inventory.containers.map(containerTags)]),
+  );
+  const envOf = (tags: Tags): string => tags[ENV_KEY] ?? '';
 
   const hosts = $derived(
     inventory.hosts.filter(
       (h) =>
-        !needle ||
-        [h.hostname, h.distro, h.facts.ips ?? ''].some((t) => t.toLowerCase().includes(needle)),
+        (!tagFilter || hasTag(h.tags, tagFilter)) &&
+        (!needle ||
+          [h.hostname, h.distro, h.facts.ips ?? '', h.owner, ...tagText(h.tags)].some((t) =>
+            t.toLowerCase().includes(needle),
+          )),
     ),
   );
   const containers = $derived(
     inventory.containers.filter(
       (c) =>
-        !needle ||
-        [c.name, c.image, hostName.get(c.host_id) ?? ''].some((t) =>
-          t.toLowerCase().includes(needle),
-        ),
+        (!tagFilter || hasTag(containerTags(c), tagFilter)) &&
+        (!needle ||
+          [c.name, c.image, hostName.get(c.host_id) ?? '', c.owner, ...tagText(c.tags)].some((t) =>
+            t.toLowerCase().includes(needle),
+          )),
     ),
+  );
+  const hostGroups = $derived(
+    groupByEnvironment
+      ? groupByEnv<Host>(hosts, (h) => envOf(h.tags))
+      : [{ env: null, items: hosts }],
+  );
+  const containerGroups = $derived(
+    groupByEnvironment
+      ? groupByEnv<Container>(containers, (c) => envOf(containerTags(c)))
+      : [{ env: null, items: containers }],
   );
 
   const liveText: Record<LiveStatus, string> = {
@@ -94,11 +122,20 @@
     <input
       id="inventory-filter"
       type="search"
-      placeholder="Name, image or IP"
+      placeholder="Name, image, IP or tag"
       autocomplete="off"
       spellcheck="false"
       bind:value={filter}
     />
+    <label for="inventory-tag">Tag</label>
+    <select id="inventory-tag" bind:value={tagFilter}>
+      <option value="">Any tag</option>
+      {#each options as o (o)}<option value={o}>{o}</option>{/each}
+    </select>
+    <label class="check">
+      <input type="checkbox" bind:checked={groupByEnvironment} />
+      Group by environment
+    </label>
     {#if inventory.pendingReorder > 0}
       <p class="reorder" role="status">
         {inventory.pendingReorder}
@@ -118,24 +155,36 @@
           <th scope="col">Host</th>
           <th scope="col">System</th>
           <th scope="col">Addresses</th>
+          <th scope="col">Tags</th>
           <th scope="col" class="num">Containers running</th>
           <th scope="col">Last seen</th>
         </tr>
       </thead>
-      <tbody>
-        {#each hosts as h (h.id)}
-          <tr>
-            <td><StatusBadge status={h.status} /></td>
-            <th scope="row"><a href="/inventory/hosts/{h.id}">{h.hostname}</a></th>
-            <td>{h.distro || h.os}</td>
-            <td class="mono">{h.facts.ips ?? '—'}</td>
-            <td class="num">{counts(h.id)}</td>
-            <td>{formatTime(h.last_seen_at)}</td>
-          </tr>
-        {:else}
-          <tr><td colspan="6">No host matches the filter.</td></tr>
-        {/each}
-      </tbody>
+      {#each hostGroups as group (group.env ?? '*')}
+        <tbody>
+          {#if group.env !== null}
+            <tr class="group"
+              ><th scope="colgroup" colspan="7"
+                >{group.env || 'No environment'}
+                <span class="count">({group.items.length})</span></th
+              ></tr
+            >
+          {/if}
+          {#each group.items as h (h.id)}
+            <tr>
+              <td><StatusBadge status={h.status} /></td>
+              <th scope="row"><a href="/inventory/hosts/{h.id}">{h.hostname}</a></th>
+              <td>{h.distro || h.os}</td>
+              <td class="mono">{h.facts.ips ?? '—'}</td>
+              <td><TagChips tags={h.tags} /></td>
+              <td class="num">{counts(h.id)}</td>
+              <td>{formatTime(h.last_seen_at)}</td>
+            </tr>
+          {:else}
+            <tr><td colspan="7">No host matches the filter.</td></tr>
+          {/each}
+        </tbody>
+      {/each}
     </table>
   </div>
 
@@ -149,33 +198,46 @@
           <th scope="col">Container</th>
           <th scope="col">Host</th>
           <th scope="col">Image</th>
+          <th scope="col">Tags</th>
           <th scope="col" class="num">Published ports</th>
           <th scope="col" class="num">Restarts</th>
         </tr>
       </thead>
-      <tbody>
-        {#each containers as c (c.id)}
-          <tr>
-            <td><StatusBadge status={c.state} /></td>
-            <th scope="row"><a href="/inventory/containers/{c.id}">{c.name}</a></th>
-            <td
-              ><a href="/inventory/hosts/{c.host_id}">{hostName.get(c.host_id) ?? 'Unknown host'}</a
-              ></td
+      {#each containerGroups as group (group.env ?? '*')}
+        <tbody>
+          {#if group.env !== null}
+            <tr class="group"
+              ><th scope="colgroup" colspan="7"
+                >{group.env || 'No environment'}
+                <span class="count">({group.items.length})</span></th
+              ></tr
             >
-            <td class="mono wrap" title={c.image}>{c.image}</td>
-            <td class="num">{c.ports.length}</td>
-            <td class="num">{c.restart_count}</td>
-          </tr>
-        {:else}
-          <tr
-            ><td colspan="6"
-              >{inventory.containers.length === 0
-                ? 'No containers reported yet.'
-                : 'No container matches the filter.'}</td
-            ></tr
-          >
-        {/each}
-      </tbody>
+          {/if}
+          {#each group.items as c (c.id)}
+            <tr>
+              <td><StatusBadge status={c.state} /></td>
+              <th scope="row"><a href="/inventory/containers/{c.id}">{c.name}</a></th>
+              <td
+                ><a href="/inventory/hosts/{c.host_id}"
+                  >{hostName.get(c.host_id) ?? 'Unknown host'}</a
+                ></td
+              >
+              <td class="mono wrap" title={c.image}>{c.image}</td>
+              <td><TagChips tags={c.tags} /></td>
+              <td class="num">{c.ports.length}</td>
+              <td class="num">{c.restart_count}</td>
+            </tr>
+          {:else}
+            <tr
+              ><td colspan="7"
+                >{inventory.containers.length === 0
+                  ? 'No containers reported yet.'
+                  : 'No container matches the filter.'}</td
+              ></tr
+            >
+          {/each}
+        </tbody>
+      {/each}
     </table>
   </div>
 {/if}
@@ -238,7 +300,8 @@
     font-weight: 600;
   }
 
-  input {
+  input:not([type='checkbox']),
+  select {
     min-height: var(--target-size);
     min-width: 16rem;
     padding: var(--space-1) var(--space-3);
@@ -247,6 +310,28 @@
     background: var(--color-surface);
     color: var(--color-text);
     font: inherit;
+  }
+
+  select {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-1);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+  }
+
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--target-size);
+    font-weight: 400;
+  }
+
+  .group th {
+    background: var(--color-surface-sunken);
+    text-align: left;
   }
 
   .reorder {

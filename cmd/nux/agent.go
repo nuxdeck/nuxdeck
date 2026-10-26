@@ -16,8 +16,11 @@ import (
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
 	"github.com/nuxdeck/nuxdeck/internal/agent/enroll"
 	"github.com/nuxdeck/nuxdeck/internal/agent/inventory"
+	"github.com/nuxdeck/nuxdeck/internal/agent/logs"
+	"github.com/nuxdeck/nuxdeck/internal/agent/metrics"
 	agentrun "github.com/nuxdeck/nuxdeck/internal/agent/run"
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
+	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 )
 
 const (
@@ -128,7 +131,16 @@ func agentRun(ctx context.Context, args []string, settings cli.Settings, stderr 
 
 	inv := inventory.New(inventory.Config{SockguardSocket: *sockSocket, Log: log})
 	go inv.Run(ctx)
-	err := agentrun.Run(ctx, agentrun.Config{StateDir: *stateDir, Version: version, Log: log, Inventory: inv})
+	met := metrics.New(metrics.Config{SockguardSocket: *sockSocket, Log: log, Containers: func() []*agentv1.Container {
+		snap, _, detach := inv.Attach()
+		detach()
+		return snap.GetContainers()
+	}})
+	go met.Run(ctx)
+	err := agentrun.Run(ctx, agentrun.Config{
+		StateDir: *stateDir, Version: version, Log: log, Inventory: inv, Metrics: met,
+		Logs: logs.New(logs.Config{SockguardSocket: *sockSocket, Log: log}),
+	})
 	switch errcode.CodeOf(err) {
 	case "":
 		if err != nil {

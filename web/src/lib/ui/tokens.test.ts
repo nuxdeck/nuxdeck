@@ -87,6 +87,18 @@ describe('design tokens', () => {
     }
   });
 
+  it.each([
+    ['light', light],
+    ['dark', darkByChoice],
+  ])('keeps chart series visible against the surface in the %s theme (1.4.11)', (_name, theme) => {
+    for (let i = 1; i <= 6; i++) {
+      expect(
+        contrast(theme[`--color-chart-${i}`] as string, theme['--color-surface'] as string),
+        `--color-chart-${i}`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('uses the type scale and 4px spacing grid from the UX spec', () => {
     const sizes = ['xs', 'sm', 'base', 'md', 'lg', 'xl'].map((k) => light[`--font-size-${k}`]);
     expect(sizes).toEqual(['12px', '13px', '14px', '16px', '20px', '24px']);

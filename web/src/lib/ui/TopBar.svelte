@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { auth } from '../auth.svelte';
+  import { palette } from '../palette.svelte';
   import { appearance } from '../theme.svelte';
   import Icon from './Icon.svelte';
 
@@ -30,6 +31,16 @@
   </button>
   <a class="brand" href="/">Nux Deck</a>
   <span class="spacer"></span>
+  <button
+    type="button"
+    class="text-button search"
+    aria-haspopup="dialog"
+    onclick={() => palette.open()}
+  >
+    <Icon name="search" size={16} />
+    Search
+    <kbd>Ctrl K</kbd>
+  </button>
   {#if auth.user}
     <span class="user">{auth.user.name}</span>
     <button type="button" class="text-button" onclick={() => void auth.logout()}>Sign out</button>
@@ -93,6 +104,21 @@
 
   .text-button:hover {
     background: var(--color-surface-sunken);
+  }
+
+  .search {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  kbd {
+    padding: 0 var(--space-1);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-1);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
   }
 
   .icon-button {

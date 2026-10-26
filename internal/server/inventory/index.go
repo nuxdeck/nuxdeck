@@ -31,6 +31,8 @@ func NewIndex(hosts []Host, containers []Container) *Index {
 
 func (ix *Index) putHost(h Host) {
 	h.Facts = maps.Clone(h.Facts)
+	h.Tags = nonNil(h.Tags)
+	h.ETag = MetaETag(h.Owner, h.Tags)
 	ix.hosts[h.ID] = h
 	ix.byAgent[h.AgentID] = h.ID
 }
@@ -44,7 +46,9 @@ func (ix *Index) setHost(h Host) {
 func (ix *Index) setContainer(c Container) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
-	ix.containers[c.ID] = clone(c)
+	c = clone(c)
+	c.ETag = MetaETag(c.Owner, c.Tags)
+	ix.containers[c.ID] = c
 }
 
 // HostByAgent finds the host of an agent.
@@ -55,9 +59,7 @@ func (ix *Index) HostByAgent(agentID string) (Host, bool) {
 	if !ok {
 		return Host{}, false
 	}
-	h := ix.hosts[id]
-	h.Facts = maps.Clone(h.Facts)
-	return h, true
+	return cloneHost(ix.hosts[id]), true
 }
 
 // Host returns one host by ID.
@@ -65,8 +67,7 @@ func (ix *Index) Host(id string) (Host, bool) {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	h, ok := ix.hosts[id]
-	h.Facts = maps.Clone(h.Facts)
-	return h, ok
+	return cloneHost(h), ok
 }
 
 // Container returns one container by ID.
@@ -81,6 +82,7 @@ func (ix *Index) Container(id string) (Container, bool) {
 type HostFilter struct {
 	Status      string // empty means online and offline
 	IncludeGone bool
+	Tags        []TagSelector // all must match
 }
 
 // ContainerFilter selects containers for List.
@@ -88,6 +90,7 @@ type ContainerFilter struct {
 	HostID      string
 	State       string
 	IncludeGone bool
+	Tags        []TagSelector // all must match
 }
 
 // Page is one page of a cursor-paginated list ordered by ID (which sorts by creation time).
@@ -102,15 +105,13 @@ func (ix *Index) Hosts(f HostFilter, cursor string, limit int) Page[Host] {
 	defer ix.mu.RUnlock()
 	ids := make([]string, 0, len(ix.hosts))
 	for id, h := range ix.hosts {
-		if (h.Status == StatusGone && !f.IncludeGone) || (f.Status != "" && h.Status != f.Status) {
+		if (h.Status == StatusGone && !f.IncludeGone) || (f.Status != "" && h.Status != f.Status) || !matchesAll(h.Tags, f.Tags) {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	return paginate(ids, cursor, limit, func(id string) Host {
-		h := ix.hosts[id]
-		h.Facts = maps.Clone(h.Facts)
-		return h
+		return cloneHost(ix.hosts[id])
 	})
 }
 
@@ -120,7 +121,7 @@ func (ix *Index) Containers(f ContainerFilter, cursor string, limit int) Page[Co
 	defer ix.mu.RUnlock()
 	ids := make([]string, 0, len(ix.containers))
 	for id, c := range ix.containers {
-		if (c.GoneAt != nil && !f.IncludeGone) || (f.HostID != "" && c.HostID != f.HostID) || (f.State != "" && c.State != f.State) {
+		if (c.GoneAt != nil && !f.IncludeGone) || (f.HostID != "" && c.HostID != f.HostID) || (f.State != "" && c.State != f.State) || !matchesAll(c.Tags, f.Tags) {
 			continue
 		}
 		ids = append(ids, id)
@@ -148,8 +149,22 @@ func paginate[T any](ids []string, cursor string, limit int, get func(string) T)
 	return page
 }
 
+func nonNil(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+func cloneHost(h Host) Host {
+	h.Facts = maps.Clone(h.Facts)
+	h.Tags = maps.Clone(h.Tags)
+	return h
+}
+
 func clone(c Container) Container {
 	c.Labels = maps.Clone(c.Labels)
+	c.Tags = nonNil(maps.Clone(c.Tags))
 	c.Ports = slices.Clone(c.Ports)
 	return c
 }

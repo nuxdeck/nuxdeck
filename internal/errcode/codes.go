@@ -26,6 +26,8 @@ const (
 	APIVal001    Code = "API-VAL-001"
 	APIInt001    Code = "API-INT-001"
 	APILim001    Code = "API-LIM-001"
+	APIPre001    Code = "API-PRE-001"
+	APIPre002    Code = "API-PRE-002"
 	AuthPwd001   Code = "AUTH-PWD-001" //nolint:gosec // an error code, not a credential
 	AuthDeny001  Code = "AUTH-DENY-001"
 	AuthDeny002  Code = "AUTH-DENY-002"
@@ -34,6 +36,12 @@ const (
 	AuthDeny005  Code = "AUTH-DENY-005"
 	AuthSetup001 Code = "AUTH-SETUP-001"
 	AuthSetup002 Code = "AUTH-SETUP-002"
+	LOGStr001    Code = "LOG-STR-001"
+	LOGStr002    Code = "LOG-STR-002"
+	LOGStr003    Code = "LOG-STR-003"
+	LOGSrc001    Code = "LOG-SRC-001"
+	LOGSrc002    Code = "LOG-SRC-002"
+	LOGSrc003    Code = "LOG-SRC-003"
 	GWTok001     Code = "GW-TOK-001" //nolint:gosec // an error code, not a credential
 	GWCSR001     Code = "GW-CSR-001"
 	GWCA001      Code = "GW-CA-001"
@@ -49,6 +57,8 @@ const (
 	SKGSock001   Code = "SKG-SOCK-001"
 	AGTCol001    Code = "AGT-COL-001"
 	AGTCol002    Code = "AGT-COL-002"
+	AGTCol003    Code = "AGT-COL-003"
+	AGTCol004    Code = "AGT-COL-004"
 	AGTEnr001    Code = "AGT-ENR-001"
 	AGTEnr002    Code = "AGT-ENR-002"
 	AGTEnr003    Code = "AGT-ENR-003"
@@ -83,6 +93,8 @@ func Entries() []Entry {
 		{APIVal001, "Invalid request", "The request body is missing, malformed or contains unknown fields.", "Send a JSON body with Content-Type: application/json and only the documented fields."},
 		{APIInt001, "Internal error", "Something went wrong on the server.", "Try again; if it keeps happening, report the request ID from the X-Request-ID response header."},
 		{APILim001, "Too many live connections", "The server is serving as many live update streams as it allows.", "Close other tabs or try again in a moment."},
+		{APIPre001, "Item changed", "Someone else changed this item after you loaded it.", "Reload the item and apply your change again."},
+		{APIPre002, "Version required", "This change needs the If-Match header with the ETag of the version you edited.", "Send the ETag from the last GET of the item in If-Match."},
 		{AuthPwd001, "Password not accepted", "The password does not meet the password policy.", "Use at least 12 characters and avoid common or breached passwords."},
 		{AuthDeny001, "Sign-in failed", "The email or password is incorrect.", "Check the email and password and try again."},
 		{AuthDeny002, "Too many attempts", "Too many failed attempts from this address.", "Wait a few minutes and try again."},
@@ -91,6 +103,12 @@ func Entries() []Entry {
 		{AuthDeny005, "Permission denied", "Your role does not allow this action.", "Ask an administrator for the required role."},
 		{AuthSetup001, "Setup token not accepted", "The setup token is missing or wrong.", "Run nuxd setup-token on the server and paste its output."},
 		{AuthSetup002, "Setup already completed", "This server already has an administrator.", "Sign in instead."},
+		{LOGStr001, "Too many live log streams", "The limit on concurrent live log streams was reached.", "Close other log tabs or try again in a moment."},
+		{LOGStr002, "Invalid log stream request", "The log stream request was malformed or duplicated.", "Reload the page and open the log again."},
+		{LOGStr003, "Log stream lagging", "Your connection could not keep up, so some log lines were dropped.", "Narrow the stream with a filter or watch a quieter source."},
+		{LOGSrc001, "Log source unavailable", "The agent cannot read this container's logs through nux-sockguard.", "Check that the container exists, that nux-sockguard is running and that Docker or Podman is running."},
+		{LOGSrc002, "Journal unavailable", "The agent cannot read the systemd journal for this unit.", "Check that journalctl is installed on the host and that the agent's user may read the journal (systemd-journal group)."},
+		{LOGSrc003, "Host not connected", "The agent of this host is offline, so there is nothing to stream.", "Wait for the host to come back online."},
 		{GWTok001, "Enrolment token not accepted", "The enrolment token is unknown, expired or already used.", "Create a new token in the UI; each token works once and expires after 1 hour."},
 		{GWCSR001, "Certificate request rejected", "The certificate signing request is malformed or uses an unsupported key.", "Update the agent, which generates an ECDSA P-256 key and signs the request itself."},
 		{GWCA001, "Agent CA unavailable", "The internal certificate authority could not be loaded or created.", "Check that the pki directory in the data directory is readable by nuxd and that ca.crt and ca.key belong together."},
@@ -106,6 +124,8 @@ func Entries() []Entry {
 		{SKGSock001, "Socket cannot be set up", "nux-sockguard could not create its listening socket.", "Check that the directory exists and belongs to nux-sg, and that the path is not a regular file."},
 		{AGTCol001, "Container inventory unavailable", "The agent cannot read containers through nux-sockguard.", "Check that nux-sockguard is running, that Docker or Podman is running, and that the agent's user is in the nux group."},
 		{AGTCol002, "Host facts incomplete", "The agent could not read some host facts from /proc, /sys or /etc.", "Check that the agent's sandbox allows reading them; other facts are still reported."},
+		{AGTCol003, "Host metrics unavailable", "The agent could not read host metrics from /proc or statfs.", "Check that the agent's sandbox allows reading /proc and the mounted file systems; other metrics are still reported."},
+		{AGTCol004, "Container metrics unavailable", "The agent could not read container metrics from cgroups or through nux-sockguard.", "Check that cgroups v2 is mounted at /sys/fs/cgroup and that nux-sockguard is running; other metrics are still reported."},
 		{AGTEnr001, "Agent already enrolled", "This host already holds an agent identity.", "Run nux agent run, or pass --force to enrol again with a new token."},
 		{AGTEnr002, "Enrolment failed", "nuxd did not accept the enrolment request.", "Create a new token in the UI and run nux agent enroll again."},
 		{AGTEnr003, "Gateway not trusted", "The server's certificate does not chain to the CA fingerprint in the token.", "Check that the token was copied completely and that nothing intercepts the connection to the gateway."},

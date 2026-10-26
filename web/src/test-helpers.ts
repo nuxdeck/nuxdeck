@@ -116,6 +116,10 @@ export const signedInRoutes: Record<string, Handler | Reply> = {
   'GET /api/v1/me': { status: 200, body: SESSION },
   'GET /api/v1/hosts?limit=500': emptyList,
   'GET /api/v1/containers?limit=500': emptyList,
+  'GET /api/v1/overview/pressure': {
+    status: 200,
+    body: { generated_at: 0, window_seconds: 300, hosts: [], containers: [] },
+  },
 };
 
 export const anonymousRoutes = (setupRequired: boolean): Record<string, Handler | Reply> => ({

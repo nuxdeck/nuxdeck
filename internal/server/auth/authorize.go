@@ -23,6 +23,10 @@ const (
 	ActionAgentRevoke      Action = "agents.revoke"
 	ActionInventoryRead    Action = "inventory.read"
 	ActionEventsStream     Action = "events.stream"
+	ActionLogsStream       Action = "logs.stream"
+	ActionMetricsRead      Action = "metrics.read"
+	ActionItemMetaUpdate   Action = "items.meta.update"
+	ActionSearch           Action = "search.read"
 )
 
 // Principal is the caller. The zero value is anonymous.
@@ -45,6 +49,7 @@ const (
 	public requirement = iota + 1 // anyone, signed in or not
 	signedIn
 	viewer
+	operator
 	admin
 )
 
@@ -60,6 +65,10 @@ var rules = map[Action]requirement{
 	ActionAgentRevoke:      admin,
 	ActionInventoryRead:    viewer,
 	ActionEventsStream:     viewer,
+	ActionLogsStream:       viewer,
+	ActionMetricsRead:      viewer,
+	ActionItemMetaUpdate:   operator,
+	ActionSearch:           viewer,
 }
 
 // Authorize returns nil if p may perform a, and an AUTH-DENY error otherwise.
@@ -81,6 +90,14 @@ func Authorize(p Principal, a Action) error {
 			return nil
 		}
 		return errcode.New(errcode.AuthDeny005, "action %s needs the viewer role", a)
+	case operator:
+		if !p.Authenticated() {
+			return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
+		}
+		if p.HasRole(RoleOperator) || p.HasRole(RoleAdmin) {
+			return nil
+		}
+		return errcode.New(errcode.AuthDeny005, "action %s needs the operator role", a)
 	case admin:
 		if !p.Authenticated() {
 			return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)

@@ -17,6 +17,8 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
+	"github.com/nuxdeck/nuxdeck/internal/server/logs"
+	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
@@ -47,6 +49,13 @@ type Options struct {
 	Revoker Revoker
 	// Inventory serves hosts, containers and the live event stream; it needs Auth.
 	Inventory *inventory.Service
+	// Logs, with Auth, Inventory and Audit, enables GET /api/v1/logs/stream. LogScope narrows
+	// who may read which host's logs (NUX-37); nil allows every viewer.
+	Logs     *logs.Broker
+	Audit    Auditor
+	LogScope LogScope
+	// Metrics serves chart queries and the overview ranking; it needs Auth and Inventory.
+	Metrics *metrics.Service
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -70,6 +79,12 @@ func Handler(o Options) http.Handler {
 		a.register(mux)
 		if o.Inventory != nil {
 			(&inventoryAPI{authAPI: a, inv: o.Inventory}).register(mux)
+			if o.Metrics != nil {
+				(&metricsAPI{authAPI: a, m: o.Metrics, inv: o.Inventory}).register(mux)
+			}
+		}
+		if o.Inventory != nil && o.Logs != nil && o.Audit != nil { // without an audit sink there is no stream
+			(&logsAPI{authAPI: a, inv: o.Inventory, broker: o.Logs, audit: o.Audit, scope: o.LogScope}).register(mux)
 		}
 		if o.PKI != nil {
 			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL, revoker: o.Revoker}).register(mux)

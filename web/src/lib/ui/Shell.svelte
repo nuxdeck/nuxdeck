@@ -3,6 +3,8 @@
   import { onDestroy, onMount, tick, type Component } from 'svelte';
   import { inventory } from '../inventory.svelte';
   import { findSection, resolveRoute, router } from '../router.svelte';
+  import { isPaletteShortcut, palette } from '../palette.svelte';
+  import CommandPalette from '../ui/CommandPalette.svelte';
   import Sidebar from '../ui/Sidebar.svelte';
   import TopBar from '../ui/TopBar.svelte';
   import AddHost from '../../routes/AddHost.svelte';
@@ -95,7 +97,14 @@
   }
 </script>
 
-<svelte:window onclick={interceptLinks} />
+<svelte:window
+  onclick={interceptLinks}
+  onkeydown={(e) => {
+    if (!isPaletteShortcut(e)) return;
+    e.preventDefault(); // Ctrl+K would otherwise focus the browser's search field
+    palette.toggle();
+  }}
+/>
 
 <a class="skip-link" href="#main">Skip to main content</a>
 <div class="shell">
@@ -115,6 +124,8 @@
     </main>
   </div>
 </div>
+
+<CommandPalette />
 
 <style>
   .shell {

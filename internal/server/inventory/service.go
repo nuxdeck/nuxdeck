@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nuxdeck/nuxdeck/internal/server/audit"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 )
 
@@ -189,7 +190,7 @@ func (s *Service) upsertHostLocked(agentID string, pf *agentv1.HostFacts) (Host,
 	}
 	before, existed := s.index.HostByAgent(agentID)
 	if existed {
-		h.ID, h.Owner, h.FirstSeenAt = before.ID, before.Owner, before.FirstSeenAt
+		h.ID, h.Owner, h.Tags, h.FirstSeenAt = before.ID, before.Owner, before.Tags, before.FirstSeenAt
 	}
 	stored, created, err := s.repo.UpsertHost(h)
 	if err != nil {
@@ -197,6 +198,7 @@ func (s *Service) upsertHostLocked(agentID string, pf *agentv1.HostFacts) (Host,
 		return Host{}, false
 	}
 	s.index.setHost(stored)
+	stored, _ = s.index.Host(stored.ID) // the index adds the ETag
 	switch {
 	case created:
 		s.hub.Publish(EventHostCreated, stored)
@@ -208,6 +210,7 @@ func (s *Service) upsertHostLocked(agentID string, pf *agentv1.HostFacts) (Host,
 
 func (s *Service) publishContainerLocked(ch ContainerChange) {
 	s.index.setContainer(ch.Container)
+	ch.Container, _ = s.index.Container(ch.Container.ID) // the index adds the ETag
 	typ := EventContainerUpdated
 	switch {
 	case ch.Removed:
@@ -216,6 +219,55 @@ func (s *Service) publishContainerLocked(ch ContainerChange) {
 		typ = EventContainerCreated
 	}
 	s.hub.Publish(typ, ch.Container)
+}
+
+// UpdateMeta changes the owner and/or tags of a host or container (INV-3). ifMatch is the ETag the
+// caller last saw; a different current ETag fails with ErrStale and nothing is written. The audit entry
+// is written by the repository in the same transaction.
+func (s *Service) UpdateMeta(itemType, id, ifMatch string, change MetaChange, ev audit.Event) (any, error) {
+	if change.Tags != nil {
+		if err := ValidateTags(change.Tags); err != nil {
+			return nil, err
+		}
+	}
+	if change.Owner != nil {
+		if err := ValidateOwner(*change.Owner); err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch itemType {
+	case ItemHost:
+		h, ok := s.index.Host(id)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		owner, tags, err := s.repo.UpdateMeta(itemType, id, ifMatch, change, ev)
+		if err != nil {
+			return nil, err
+		}
+		h.Owner, h.Tags = owner, tags
+		s.index.setHost(h)
+		h, _ = s.index.Host(id)
+		s.hub.Publish(EventHostUpdated, h)
+		return h, nil
+	case ItemContainer:
+		c, ok := s.index.Container(id)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		owner, tags, err := s.repo.UpdateMeta(itemType, id, ifMatch, change, ev)
+		if err != nil {
+			return nil, err
+		}
+		c.Owner, c.Tags = owner, tags
+		s.index.setContainer(c)
+		c, _ = s.index.Container(id)
+		s.hub.Publish(EventContainerUpdated, c)
+		return c, nil
+	}
+	return nil, ErrNotFound
 }
 
 // sameHost compares what viewers see, ignoring the last-seen time.

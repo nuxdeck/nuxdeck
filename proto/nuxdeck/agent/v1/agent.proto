@@ -202,6 +202,8 @@ message Series {
   // For example "cpu.usage_percent" or "memory.used_bytes".
   string metric = 2;
   repeated Point points = 3;
+  // Dimensions such as {"cpu": "0", "mode": "iowait"}; empty when the metric has none.
+  map<string, string> labels = 4;
 }
 
 message Point {

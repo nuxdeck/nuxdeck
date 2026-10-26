@@ -8,6 +8,8 @@ package inventory
 
 import (
 	"time"
+
+	"github.com/nuxdeck/nuxdeck/internal/server/audit"
 )
 
 // Host states.
@@ -30,6 +32,8 @@ type Host struct {
 	MemoryBytes int64             `json:"memory_bytes"`
 	Facts       map[string]string `json:"facts"`
 	Owner       string            `json:"owner"`
+	Tags        map[string]string `json:"tags"`
+	ETag        string            `json:"etag"`
 	Status      string            `json:"status"`
 	FirstSeenAt time.Time         `json:"first_seen_at"`
 	LastSeenAt  time.Time         `json:"last_seen_at"`
@@ -55,6 +59,9 @@ type Container struct {
 	State        string            `json:"state"`
 	Ports        []Port            `json:"ports"`
 	Labels       map[string]string `json:"labels"`
+	Owner        string            `json:"owner"`
+	Tags         map[string]string `json:"tags"`
+	ETag         string            `json:"etag"`
 	RestartCount int               `json:"restart_count"`
 	CreatedAt    *time.Time        `json:"created_at"`
 	GoneAt       *time.Time        `json:"gone_at"`
@@ -94,6 +101,9 @@ type Repository interface {
 	ApplyContainer(c Container) (*ContainerChange, error)
 	// RemoveContainer marks a container gone and reports the change; unknown or already gone means nil.
 	RemoveContainer(hostID, runtimeID string, at time.Time) (*ContainerChange, error)
+	// UpdateMeta changes the owner and/or tags of one item and appends ev, all in one transaction. It
+	// returns ErrNotFound for an unknown item and ErrStale when the item's ETag is not ifMatch.
+	UpdateMeta(itemType, itemID, ifMatch string, change MetaChange, ev audit.Event) (owner string, tags map[string]string, err error)
 }
 
 // ContainerChange is what a write changed.

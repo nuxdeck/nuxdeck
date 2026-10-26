@@ -83,6 +83,17 @@ class InventoryStore {
     this.pendingReorder = 0;
   }
 
+  /** Puts an item the server just returned (for example after a tag edit) into the lists. */
+  replaceHost(host: Host): void {
+    if (!this.host(host.id)) return;
+    this.upsert(this.hosts, host, hostRank, (h) => (this.hosts = h));
+  }
+
+  replaceContainer(container: Container): void {
+    if (!this.container(container.id)) return;
+    this.upsert(this.containers, container, containerRank, (c) => (this.containers = c));
+  }
+
   host(id: string): Host | undefined {
     return this.hosts.find((h) => h.id === id);
   }

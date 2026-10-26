@@ -49,6 +49,9 @@ export interface Host {
   memory_bytes: number;
   facts: Record<string, string>;
   owner: string;
+  tags: Record<string, string>;
+  /** Identifies the owner and tags; send it back in If-Match when changing them. */
+  etag: string;
   status: 'online' | 'offline' | 'gone';
   first_seen_at: string;
   last_seen_at: string;
@@ -72,10 +75,26 @@ export interface Container {
   state: string;
   ports: Port[];
   labels: Record<string, string>;
+  owner: string;
+  tags: Record<string, string>;
+  etag: string;
   restart_count: number;
   created_at: string | null;
   gone_at: string | null;
 }
+
+export interface SearchHit {
+  type: 'host' | 'container';
+  id: string;
+  name: string;
+  status: string;
+  /** The host's name, for containers. */
+  host?: string;
+  match: 'name' | 'tag' | 'ip';
+  detail: string;
+}
+
+export type ItemKind = 'hosts' | 'containers';
 
 export interface Page<T> {
   items: T[];
@@ -103,6 +122,73 @@ export interface ServerEvent {
   item?: Host | Container;
 }
 
+/** One line of a metrics query: points are [unix_ms, value]; counters arrive as per-second rates. */
+export interface MetricSeries {
+  metric: string;
+  labels: Record<string, string>;
+  points: [number, number][];
+}
+
+export interface MetricsResult {
+  resolution: 'full' | '5m';
+  kind: 'gauge' | 'rate';
+  unit: string;
+  step_seconds: number;
+  from: number;
+  to: number;
+  series: MetricSeries[];
+}
+
+export interface MetricsQuery {
+  /** Host or container ID. */
+  target: string;
+  metric: string;
+  /** Unix milliseconds. */
+  from: number;
+  to: number;
+  /** Seconds per point; the server decimates to it. */
+  step?: number;
+  /** Exact label filters, at most four. */
+  labels?: Record<string, string>;
+}
+
+export interface Pressure {
+  id: string;
+  name: string;
+  host_id?: string;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  disk_percent: number | null;
+  score: number | null;
+  rank: Record<string, number>;
+}
+
+export interface PressureReport {
+  generated_at: number;
+  window_seconds: number;
+  hosts: Pressure[];
+  containers: Pressure[];
+}
+
+export const MAX_LABEL_FILTERS = 4;
+
+/** The query string of GET /metrics/query; label filters are sorted so equal queries give equal URLs. */
+export function metricsQueryString(q: MetricsQuery): string {
+  const labels = Object.entries(q.labels ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (labels.length > MAX_LABEL_FILTERS) {
+    throw new RangeError(`at most ${MAX_LABEL_FILTERS} label filters are allowed`);
+  }
+  const p = new URLSearchParams({
+    target: q.target,
+    metric: q.metric,
+    from: String(Math.trunc(q.from)),
+    to: String(Math.trunc(q.to)),
+  });
+  if (q.step !== undefined) p.set('step', String(Math.max(1, Math.ceil(q.step))));
+  for (const [k, v] of labels) p.append('label', `${k}:${v}`);
+  return p.toString();
+}
+
 const NETWORK_ERROR: Omit<ApiError, 'status'> = {
   code: 'NETWORK',
   message: 'Could not reach the server.',
@@ -111,8 +197,14 @@ const NETWORK_ERROR: Omit<ApiError, 'status'> = {
 
 let csrfToken = '';
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+async function request<T>(
+  method: 'GET' | 'POST' | 'PUT',
+  path: string,
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  const headers: Record<string, string> = { ...extraHeaders };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET' && csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
@@ -122,6 +214,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
       method,
       headers,
       credentials: 'same-origin',
+      signal,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -217,6 +310,33 @@ export const api = {
   host: (id: string) => request<Host>('GET', `/hosts/${encodeURIComponent(id)}`),
   containers: () => all<Container>('/containers'),
   container: (id: string) => request<Container>('GET', `/containers/${encodeURIComponent(id)}`),
+  /** Replaces all tags of an item. `etag` is the one the item carried when the reader loaded it. */
+  putTags: (kind: ItemKind, id: string, tags: Record<string, string>, etag: string) =>
+    request<Host | Container>(
+      'PUT',
+      `/items/${kind}/${encodeURIComponent(id)}/tags`,
+      { tags },
+      { 'If-Match': etag },
+    ),
+  putOwner: (kind: ItemKind, id: string, owner: string, etag: string) =>
+    request<Host | Container>(
+      'PUT',
+      `/items/${kind}/${encodeURIComponent(id)}/owner`,
+      { owner },
+      { 'If-Match': etag },
+    ),
+  search: (q: string, signal?: AbortSignal) =>
+    request<{ items: SearchHit[] }>(
+      'GET',
+      `/search?q=${encodeURIComponent(q)}`,
+      undefined,
+      {},
+      signal,
+    ).then((r) => r.items),
+  metricsQuery: (q: MetricsQuery, signal?: AbortSignal) =>
+    request<MetricsResult>('GET', `/metrics/query?${metricsQueryString(q)}`, undefined, {}, signal),
+  pressure: (signal?: AbortSignal) =>
+    request<PressureReport>('GET', '/overview/pressure', undefined, {}, signal),
   createEnrollmentToken: () => request<EnrollmentToken>('POST', '/agents/tokens', {}),
   openEvents,
   logout: async () => {
@@ -224,3 +344,22 @@ export const api = {
     csrfToken = '';
   },
 };
+
+/** The same-origin WebSocket URL of the log stream (https becomes wss). */
+export function logSocketUrl(query: string): string {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${scheme}//${window.location.host}/api/v1/logs/stream?${query}`;
+}
+
+/**
+ * A failed WebSocket handshake gives the browser no body, so one plain request to the same URL
+ * recovers the JSON error. Resolves to the error, or null when the server shows no refusal.
+ */
+export async function probeLogStream(query: string): Promise<ApiError | null> {
+  try {
+    await request<unknown>('GET', `/logs/stream?${query}`);
+    return null;
+  } catch (e) {
+    return e instanceof ApiRequestError ? e.error : null;
+  }
+}

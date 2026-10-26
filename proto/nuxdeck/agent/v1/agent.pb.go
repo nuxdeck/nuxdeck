@@ -1614,8 +1614,10 @@ type Series struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Target *Target                `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
 	// For example "cpu.usage_percent" or "memory.used_bytes".
-	Metric        string   `protobuf:"bytes,2,opt,name=metric,proto3" json:"metric,omitempty"`
-	Points        []*Point `protobuf:"bytes,3,rep,name=points,proto3" json:"points,omitempty"`
+	Metric string   `protobuf:"bytes,2,opt,name=metric,proto3" json:"metric,omitempty"`
+	Points []*Point `protobuf:"bytes,3,rep,name=points,proto3" json:"points,omitempty"`
+	// Dimensions such as {"cpu": "0", "mode": "iowait"}; empty when the metric has none.
+	Labels        map[string]string `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1667,6 +1669,13 @@ func (x *Series) GetMetric() string {
 func (x *Series) GetPoints() []*Point {
 	if x != nil {
 		return x.Points
+	}
+	return nil
+}
+
+func (x *Series) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
 	}
 	return nil
 }
@@ -3197,11 +3206,15 @@ const file_nuxdeck_agent_v1_agent_proto_rawDesc = "" +
 	"\x02id\x18\x02 \x01(\tR\x02id\"[\n" +
 	"\vMetricBatch\x120\n" +
 	"\x06series\x18\x01 \x03(\v2\x18.nuxdeck.agent.v1.SeriesR\x06series\x12\x1a\n" +
-	"\breplayed\x18\x02 \x01(\bR\breplayed\"\x83\x01\n" +
+	"\breplayed\x18\x02 \x01(\bR\breplayed\"\xfc\x01\n" +
 	"\x06Series\x120\n" +
 	"\x06target\x18\x01 \x01(\v2\x18.nuxdeck.agent.v1.TargetR\x06target\x12\x16\n" +
 	"\x06metric\x18\x02 \x01(\tR\x06metric\x12/\n" +
-	"\x06points\x18\x03 \x03(\v2\x17.nuxdeck.agent.v1.PointR\x06points\";\n" +
+	"\x06points\x18\x03 \x03(\v2\x17.nuxdeck.agent.v1.PointR\x06points\x12<\n" +
+	"\x06labels\x18\x04 \x03(\v2$.nuxdeck.agent.v1.Series.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\";\n" +
 	"\x05Point\x12\x1c\n" +
 	"\n" +
 	"ts_unix_ms\x18\x01 \x01(\x03R\btsUnixMs\x12\x14\n" +
@@ -3345,7 +3358,7 @@ func file_nuxdeck_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_nuxdeck_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_nuxdeck_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_nuxdeck_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_nuxdeck_agent_v1_agent_proto_goTypes = []any{
 	(Runtime)(0),              // 0: nuxdeck.agent.v1.Runtime
 	(TargetKind)(0),           // 1: nuxdeck.agent.v1.TargetKind
@@ -3392,7 +3405,8 @@ var file_nuxdeck_agent_v1_agent_proto_goTypes = []any{
 	(*Disconnect)(nil),        // 42: nuxdeck.agent.v1.Disconnect
 	nil,                       // 43: nuxdeck.agent.v1.HostFacts.FactsEntry
 	nil,                       // 44: nuxdeck.agent.v1.Container.LabelsEntry
-	nil,                       // 45: nuxdeck.agent.v1.HttpCheck.HeadersEntry
+	nil,                       // 45: nuxdeck.agent.v1.Series.LabelsEntry
+	nil,                       // 46: nuxdeck.agent.v1.HttpCheck.HeadersEntry
 }
 var file_nuxdeck_agent_v1_agent_proto_depIdxs = []int32{
 	9,  // 0: nuxdeck.agent.v1.AgentMessage.hello:type_name -> nuxdeck.agent.v1.Hello
@@ -3422,32 +3436,33 @@ var file_nuxdeck_agent_v1_agent_proto_depIdxs = []int32{
 	22, // 24: nuxdeck.agent.v1.MetricBatch.series:type_name -> nuxdeck.agent.v1.Series
 	20, // 25: nuxdeck.agent.v1.Series.target:type_name -> nuxdeck.agent.v1.Target
 	23, // 26: nuxdeck.agent.v1.Series.points:type_name -> nuxdeck.agent.v1.Point
-	25, // 27: nuxdeck.agent.v1.LogChunk.lines:type_name -> nuxdeck.agent.v1.LogLine
-	3,  // 28: nuxdeck.agent.v1.LogLine.source:type_name -> nuxdeck.agent.v1.LogLine.Source
-	4,  // 29: nuxdeck.agent.v1.CheckResult.status:type_name -> nuxdeck.agent.v1.CheckResult.Status
-	31, // 30: nuxdeck.agent.v1.ServerMessage.hello_ack:type_name -> nuxdeck.agent.v1.HelloAck
-	33, // 31: nuxdeck.agent.v1.ServerMessage.open_log:type_name -> nuxdeck.agent.v1.OpenLogStream
-	34, // 32: nuxdeck.agent.v1.ServerMessage.close_log:type_name -> nuxdeck.agent.v1.CloseLogStream
-	35, // 33: nuxdeck.agent.v1.ServerMessage.run_check:type_name -> nuxdeck.agent.v1.RunCheck
-	41, // 34: nuxdeck.agent.v1.ServerMessage.renew:type_name -> nuxdeck.agent.v1.RenewResponse
-	32, // 35: nuxdeck.agent.v1.ServerMessage.config:type_name -> nuxdeck.agent.v1.ConfigUpdate
-	42, // 36: nuxdeck.agent.v1.ServerMessage.disconnect:type_name -> nuxdeck.agent.v1.Disconnect
-	36, // 37: nuxdeck.agent.v1.RunCheck.http:type_name -> nuxdeck.agent.v1.HttpCheck
-	37, // 38: nuxdeck.agent.v1.RunCheck.tcp:type_name -> nuxdeck.agent.v1.TcpCheck
-	38, // 39: nuxdeck.agent.v1.RunCheck.dns:type_name -> nuxdeck.agent.v1.DnsCheck
-	39, // 40: nuxdeck.agent.v1.RunCheck.tls:type_name -> nuxdeck.agent.v1.TlsCheck
-	40, // 41: nuxdeck.agent.v1.RunCheck.ping:type_name -> nuxdeck.agent.v1.PingCheck
-	45, // 42: nuxdeck.agent.v1.HttpCheck.headers:type_name -> nuxdeck.agent.v1.HttpCheck.HeadersEntry
-	5,  // 43: nuxdeck.agent.v1.Disconnect.reason:type_name -> nuxdeck.agent.v1.Disconnect.Reason
-	6,  // 44: nuxdeck.agent.v1.AgentGateway.Enroll:input_type -> nuxdeck.agent.v1.EnrollRequest
-	8,  // 45: nuxdeck.agent.v1.AgentGateway.Connect:input_type -> nuxdeck.agent.v1.AgentMessage
-	7,  // 46: nuxdeck.agent.v1.AgentGateway.Enroll:output_type -> nuxdeck.agent.v1.EnrollResponse
-	30, // 47: nuxdeck.agent.v1.AgentGateway.Connect:output_type -> nuxdeck.agent.v1.ServerMessage
-	46, // [46:48] is the sub-list for method output_type
-	44, // [44:46] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	45, // 27: nuxdeck.agent.v1.Series.labels:type_name -> nuxdeck.agent.v1.Series.LabelsEntry
+	25, // 28: nuxdeck.agent.v1.LogChunk.lines:type_name -> nuxdeck.agent.v1.LogLine
+	3,  // 29: nuxdeck.agent.v1.LogLine.source:type_name -> nuxdeck.agent.v1.LogLine.Source
+	4,  // 30: nuxdeck.agent.v1.CheckResult.status:type_name -> nuxdeck.agent.v1.CheckResult.Status
+	31, // 31: nuxdeck.agent.v1.ServerMessage.hello_ack:type_name -> nuxdeck.agent.v1.HelloAck
+	33, // 32: nuxdeck.agent.v1.ServerMessage.open_log:type_name -> nuxdeck.agent.v1.OpenLogStream
+	34, // 33: nuxdeck.agent.v1.ServerMessage.close_log:type_name -> nuxdeck.agent.v1.CloseLogStream
+	35, // 34: nuxdeck.agent.v1.ServerMessage.run_check:type_name -> nuxdeck.agent.v1.RunCheck
+	41, // 35: nuxdeck.agent.v1.ServerMessage.renew:type_name -> nuxdeck.agent.v1.RenewResponse
+	32, // 36: nuxdeck.agent.v1.ServerMessage.config:type_name -> nuxdeck.agent.v1.ConfigUpdate
+	42, // 37: nuxdeck.agent.v1.ServerMessage.disconnect:type_name -> nuxdeck.agent.v1.Disconnect
+	36, // 38: nuxdeck.agent.v1.RunCheck.http:type_name -> nuxdeck.agent.v1.HttpCheck
+	37, // 39: nuxdeck.agent.v1.RunCheck.tcp:type_name -> nuxdeck.agent.v1.TcpCheck
+	38, // 40: nuxdeck.agent.v1.RunCheck.dns:type_name -> nuxdeck.agent.v1.DnsCheck
+	39, // 41: nuxdeck.agent.v1.RunCheck.tls:type_name -> nuxdeck.agent.v1.TlsCheck
+	40, // 42: nuxdeck.agent.v1.RunCheck.ping:type_name -> nuxdeck.agent.v1.PingCheck
+	46, // 43: nuxdeck.agent.v1.HttpCheck.headers:type_name -> nuxdeck.agent.v1.HttpCheck.HeadersEntry
+	5,  // 44: nuxdeck.agent.v1.Disconnect.reason:type_name -> nuxdeck.agent.v1.Disconnect.Reason
+	6,  // 45: nuxdeck.agent.v1.AgentGateway.Enroll:input_type -> nuxdeck.agent.v1.EnrollRequest
+	8,  // 46: nuxdeck.agent.v1.AgentGateway.Connect:input_type -> nuxdeck.agent.v1.AgentMessage
+	7,  // 47: nuxdeck.agent.v1.AgentGateway.Enroll:output_type -> nuxdeck.agent.v1.EnrollResponse
+	30, // 48: nuxdeck.agent.v1.AgentGateway.Connect:output_type -> nuxdeck.agent.v1.ServerMessage
+	47, // [47:49] is the sub-list for method output_type
+	45, // [45:47] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_nuxdeck_agent_v1_agent_proto_init() }
@@ -3497,7 +3512,7 @@ func file_nuxdeck_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nuxdeck_agent_v1_agent_proto_rawDesc), len(file_nuxdeck_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   40,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

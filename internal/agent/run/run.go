@@ -45,6 +45,29 @@ type Inventory interface {
 	Errors() []*agentv1.CollectorError
 }
 
+// Metrics is the agent's metric source; *metrics.Service implements it.
+type Metrics interface {
+	// SetInterval applies the server's collection interval in seconds (0 means the default).
+	SetInterval(seconds uint32)
+	// Next returns the oldest unsent batch, marking samples older than replayBefore as
+	// replayed, and a commit to call once it was sent. A nil batch means nothing is waiting.
+	Next(replayBefore time.Time) (*agentv1.MetricBatch, func())
+	// Notify fires when new samples are buffered.
+	Notify() <-chan struct{}
+	// Errors lists the metric collectors that currently fail.
+	Errors() []*agentv1.CollectorError
+}
+
+// Logs serves live log streams on the server's request; *logs.Manager implements it.
+type Logs interface {
+	Open(ctx context.Context, o *agentv1.OpenLogStream)
+	Close(streamID string)
+	// CloseAll stops every stream; it is called when the connection ends.
+	CloseAll()
+	// Out yields LogChunk and LogStreamEnded messages; the loop sends them at the pace of the link.
+	Out() <-chan *agentv1.AgentMessage
+}
+
 // Config is what the loop needs.
 type Config struct {
 	StateDir string
@@ -58,6 +81,10 @@ type Config struct {
 	Now func() time.Time
 	// Inventory, when set, is sent as a snapshot after every connect and then as change events.
 	Inventory Inventory
+	// Metrics, when set, is drained onto the stream: buffered samples replayed after a connect, then live.
+	Metrics Metrics
+	// Logs, when set, answers OpenLogStream and CloseLogStream requests.
+	Logs Logs
 	// RenewAt overrides when to renew (default: two thirds into the certificate's life); tests use it.
 	RenewAt func(*identity.Identity) time.Time
 }
@@ -166,6 +193,9 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 		if s := time.Duration(ack.GetHeartbeatIntervalSeconds()) * time.Second; s > 0 {
 			interval = s
 		}
+		if c.Metrics != nil {
+			c.Metrics.SetInterval(ack.GetMetricIntervalSeconds())
+		}
 	case err := <-recvErr:
 		return classifyStreamError(err)
 	case <-time.After(ackTimeout):
@@ -193,6 +223,35 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 		}
 	}
 
+	// Samples taken before this connection are sent as replayed; later ones live.
+	var metricsReady <-chan struct{} // nil without metrics: that case never fires
+	sendMetrics := func() error { return nil }
+	if c.Metrics != nil {
+		metricsReady = c.Metrics.Notify()
+		cut := c.Now()
+		sendMetrics = func() error {
+			for {
+				batch, commit := c.Metrics.Next(cut)
+				if batch == nil {
+					return nil
+				}
+				if err := stream.Send(&agentv1.AgentMessage{Body: &agentv1.AgentMessage_Metrics{Metrics: batch}}); err != nil {
+					return err
+				}
+				commit()
+			}
+		}
+		if err := sendMetrics(); err != nil {
+			return classifyStreamError(err)
+		}
+	}
+
+	var logOut <-chan *agentv1.AgentMessage // nil without logs: that case never fires
+	if c.Logs != nil {
+		logOut = c.Logs.Out()
+		defer c.Logs.CloseAll()
+	}
+
 	beat := time.NewTicker(interval)
 	defer beat.Stop()
 	renewTimer := time.NewTimer(time.Until(c.renewAt(id)))
@@ -202,7 +261,7 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 	for {
 		select {
 		case <-beat.C:
-			if err := stream.Send(heartbeat(c.Now(), c.Inventory)); err != nil {
+			if err := stream.Send(heartbeat(c.Now(), c.Inventory, c.Metrics)); err != nil {
 				return classifyStreamError(err)
 			}
 		case <-renewTimer.C:
@@ -236,8 +295,28 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 				}
 			case *agentv1.ServerMessage_Disconnect:
 				return classifyServerMessage(m, errors.New("the server closed the stream"))
+			case *agentv1.ServerMessage_Config:
+				if c.Metrics != nil {
+					c.Metrics.SetInterval(body.Config.GetMetricIntervalSeconds())
+				}
+			case *agentv1.ServerMessage_OpenLog:
+				if c.Logs != nil {
+					c.Logs.Open(ctx, body.OpenLog)
+				}
+			case *agentv1.ServerMessage_CloseLog:
+				if c.Logs != nil {
+					c.Logs.Close(body.CloseLog.GetStreamId())
+				}
 			default:
-				// Log, check and config requests arrive with their modules (NUX-24, 27, 20).
+				// Check requests arrive with their module (NUX-27).
+			}
+		case m := <-logOut:
+			if err := stream.Send(m); err != nil {
+				return classifyStreamError(err)
+			}
+		case <-metricsReady:
+			if err := sendMetrics(); err != nil {
+				return classifyStreamError(err)
 			}
 		case ev, ok := <-changes:
 			var err error
@@ -264,12 +343,15 @@ func hello(version string) *agentv1.AgentMessage {
 	}}}
 }
 
-func heartbeat(now time.Time, inv Inventory) *agentv1.AgentMessage {
+func heartbeat(now time.Time, inv Inventory, m Metrics) *agentv1.AgentMessage {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	stats := &agentv1.AgentStats{MemoryBytes: ms.Sys}
 	if inv != nil {
 		stats.CollectorErrors = inv.Errors()
+	}
+	if m != nil {
+		stats.CollectorErrors = append(stats.CollectorErrors, m.Errors()...)
 	}
 	return &agentv1.AgentMessage{Body: &agentv1.AgentMessage_Heartbeat{Heartbeat: &agentv1.Heartbeat{SentAtUnixMs: now.UnixMilli(), Stats: stats}}}
 }

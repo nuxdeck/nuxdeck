@@ -28,9 +28,12 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
+	"github.com/nuxdeck/nuxdeck/internal/server/logs"
+	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
+	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 	"github.com/nuxdeck/nuxdeck/web"
 )
 
@@ -126,9 +129,35 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return err
 	}
-	gw, err := gateway.New(ctx, gateway.Options{
+	mt, err := metrics.Open(metrics.Options{
+		Dir: filepath.Join(cfg.DataDir, "tsdb"), Log: log, Inventory: inv.Index(),
+		FullRetention:        time.Duration(cfg.Metrics.RetentionDays) * 24 * time.Hour,
+		DownsampledRetention: time.Duration(cfg.Metrics.DownsampledRetentionDays) * 24 * time.Hour,
+	})
+	if err != nil {
+		return err
+	}
+	mt.Run(ctx)
+	defer func() {
+		if err := mt.Close(); err != nil {
+			log.Error("close metrics store", "error", err)
+		}
+	}()
+	var gw *gateway.Gateway // set below; the log broker sends through it
+	logBroker := logs.NewBroker(logs.Options{Log: log, Sender: senderFunc(func(agentID string, m *agentv1.ServerMessage) error {
+		return gw.SendToAgent(agentID, m)
+	})})
+	defer logBroker.Close()
+	gw, err = gateway.New(ctx, gateway.Options{
 		Log: log, Repo: db, Enroller: pkiSvc, Renewer: pkiSvc, CA: ca,
-		OnMessage: inv.HandleMessage, OnPresence: inv.SetPresence,
+		OnMessage: func(agentID string, m *agentv1.AgentMessage) {
+			inv.HandleMessage(agentID, m)
+			mt.HandleMessage(agentID, m)
+			logBroker.HandleMessage(agentID, m)
+		}, OnPresence: func(agentID string, online bool) {
+			inv.SetPresence(agentID, online)
+			logBroker.AgentGone(agentID) // a new or lost connection ends the streams of the old one
+		},
 		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
 	})
 	if err != nil {
@@ -136,7 +165,7 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	}
 	handler := api.Handler(api.Options{
 		Log: log, Ready: db, Version: version, UI: ui, Auth: svc,
-		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv,
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Logs: logBroker, Audit: db,
 	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
@@ -155,6 +184,11 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	log.Info("nuxd stopped")
 	return nil
 }
+
+// senderFunc adapts a function to logs.Sender.
+type senderFunc func(agentID string, m *agentv1.ServerMessage) error
+
+func (f senderFunc) SendToAgent(agentID string, m *agentv1.ServerMessage) error { return f(agentID, m) }
 
 // serveAll runs the web server and the agent gateway; when either stops, so does the other.
 func serveAll(ctx context.Context, srv *api.Server, gw *gateway.Gateway, gwLn net.Listener) error {

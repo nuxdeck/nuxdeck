@@ -41,6 +41,9 @@ func (a *inventoryAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/containers", a.listContainers)
 	mux.HandleFunc("GET /api/v1/containers/{id}", a.getContainer)
 	mux.HandleFunc("GET /api/v1/events", a.events)
+	mux.HandleFunc("PUT /api/v1/items/{type}/{id}/tags", a.putTags)
+	mux.HandleFunc("PUT /api/v1/items/{type}/{id}/owner", a.putOwner)
+	mux.HandleFunc("GET /api/v1/search", a.search)
 }
 
 type pageJSON[T any] struct {
@@ -96,7 +99,11 @@ func (a *inventoryAPI) listHosts(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusUnprocessableEntity, errcode.APIVal001, "status", "Use online or offline.")
 		return
 	}
-	writeJSON(w, http.StatusOK, page(a.inv.Index().Hosts(inventory.HostFilter{Status: status, IncludeGone: gone}, cursor, limit)))
+	tags, ok := tagSelectors(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, page(a.inv.Index().Hosts(inventory.HostFilter{Status: status, IncludeGone: gone, Tags: tags}, cursor, limit)))
 }
 
 func (a *inventoryAPI) listContainers(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +123,11 @@ func (a *inventoryAPI) listContainers(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusUnprocessableEntity, errcode.APIVal001, "state", "Use a container state such as running or exited.")
 		return
 	}
-	f := inventory.ContainerFilter{HostID: q.Get("host_id"), State: q.Get("state"), IncludeGone: gone}
+	tags, ok := tagSelectors(w, r)
+	if !ok {
+		return
+	}
+	f := inventory.ContainerFilter{HostID: q.Get("host_id"), State: q.Get("state"), IncludeGone: gone, Tags: tags}
 	writeJSON(w, http.StatusOK, page(a.inv.Index().Containers(f, cursor, limit)))
 }
 
@@ -126,6 +137,7 @@ func (a *inventoryAPI) getHost(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if h, found := a.inv.Index().Host(id); found && ulid.MatchString(id) {
+		w.Header().Set("ETag", h.ETag)
 		writeJSON(w, http.StatusOK, h)
 		return
 	}
@@ -138,6 +150,7 @@ func (a *inventoryAPI) getContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if c, found := a.inv.Index().Container(id); found && ulid.MatchString(id) {
+		w.Header().Set("ETag", c.ETag)
 		writeJSON(w, http.StatusOK, c)
 		return
 	}
