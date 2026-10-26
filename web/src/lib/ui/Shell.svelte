@@ -1,12 +1,16 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { tick, type Component } from 'svelte';
-  import { findSection, router } from '../router.svelte';
+  import { onDestroy, onMount, tick, type Component } from 'svelte';
+  import { inventory } from '../inventory.svelte';
+  import { findSection, resolveRoute, router } from '../router.svelte';
   import Sidebar from '../ui/Sidebar.svelte';
   import TopBar from '../ui/TopBar.svelte';
+  import AddHost from '../../routes/AddHost.svelte';
   import AuditLog from '../../routes/AuditLog.svelte';
   import Alerts from '../../routes/Alerts.svelte';
   import Checks from '../../routes/Checks.svelte';
+  import ContainerPage from '../../routes/ContainerPage.svelte';
+  import HostPage from '../../routes/HostPage.svelte';
   import Inventory from '../../routes/Inventory.svelte';
   import NotFound from '../../routes/NotFound.svelte';
   import Overview from '../../routes/Overview.svelte';
@@ -40,7 +44,23 @@
   let collapsed = $state(savedCollapsed());
   let first = true;
 
-  const Page = $derived(pages[router.path] ?? NotFound);
+  const route = $derived(resolveRoute(router.path));
+  const Page = $derived(route.kind === 'section' ? (pages[route.path] ?? NotFound) : NotFound);
+  const baseTitle = $derived(
+    route.kind === 'section'
+      ? findSection(route.path)?.title
+      : route.kind === 'add-host'
+        ? 'Add a host'
+        : route.kind === 'host'
+          ? 'Host'
+          : route.kind === 'container'
+            ? 'Container'
+            : 'Page not found',
+  );
+
+  // The live inventory belongs to the signed-in shell: it loads once and every page reads it.
+  onMount(() => inventory.start());
+  onDestroy(() => inventory.stop());
 
   function toggleSidebar(): void {
     collapsed = !collapsed;
@@ -54,7 +74,7 @@
   // Client-side navigation keeps the page, so tell assistive technology: update the title and
   // move focus to the new heading. Skipped on first load, where the browser does it.
   $effect(() => {
-    const title = findSection(router.path)?.title ?? 'Page not found';
+    const title = router.titleOverride ?? baseTitle ?? 'Page not found';
     document.title = `${title} · Nux Deck`;
     if (first) {
       first = false;
@@ -83,7 +103,15 @@
   <div class="body">
     <Sidebar id={SIDEBAR_ID} {collapsed} />
     <main id="main" tabindex="-1">
-      <Page />
+      {#if route.kind === 'add-host'}
+        <AddHost />
+      {:else if route.kind === 'host'}
+        {#key route.id}<HostPage id={route.id} />{/key}
+      {:else if route.kind === 'container'}
+        {#key route.id}<ContainerPage id={route.id} />{/key}
+      {:else}
+        <Page />
+      {/if}
     </main>
   </div>
 </div>

@@ -52,21 +52,21 @@ First start creates the data directory (mode 0700), `nux.db` and a self-signed c
 
 ## Add a host
 
-An admin creates a single-use token (valid 1 hour) with `POST /api/v1/agents/tokens`; the UI screen arrives with NUX-17. On the host:
+In the UI, open **Inventory, Add host**: it creates a single-use token (valid 1 hour), shows the install command with the token in it, and says "Connected: <host>" the moment the agent arrives. The same token can be made with `POST /api/v1/agents/tokens`. On the host, as root:
 
 ```sh
-echo "$TOKEN" > token.txt   # or set NUX_ENROLL_TOKEN; --token exposes it in the process list
-sudo -u nux nux agent enroll --token-file token.txt
-sudo install -m 0644 deploy/systemd/nux-agent.service /etc/systemd/system/ && sudo systemctl enable --now nux-agent
+curl -fsSL https://get.nuxdeck.com | sudo sh -s -- --agent --token 'nuxtok1.…'
 ```
+
+The installer verifies the release signature and checksum like the server install, creates the `nux` and `nux-sg` system users (only `nux-sg` joins the `docker` group), installs `nux` with the `nux-agent` and `nux-sockguard` units, enrols the host (the token goes in on standard input, never in a process's arguments) and starts both services. Re-running it upgrades the binary and keeps the host's identity. Without the installer, `nux agent enroll --token-file …` followed by `nux agent run` does the same by hand.
+
+The token carries the gateway address and the CA fingerprint, so the agent verifies `nuxd` before it sends the secret. The key is created on the host and never leaves it; the certificate lasts 24 hours and renews itself after 16. The agent only dials out (port 8444). If the agent is revoked, its identity is damaged or its certificate expired while it was offline, it exits with status 78 and systemd does not restart it: run `nux agent enroll --force` with a new token.
 
 Container data comes only through `nux sockguard` (`deploy/systemd/nux-sockguard.service`, user `nux-sg`, the only account in the `docker` group). It listens on `/run/nux/sockguard.sock` (mode 0660, group `nux`), forwards a fixed list of read-only `GET` calls and strips environment variables and mount sources from the answers; the agent itself never opens the Docker or Podman socket. Rootless Podman needs a user unit that v0.1 does not ship yet.
 
 Once connected, the agent reports the host (OS, kernel, CPU, memory, disks, IPs, boot time) and its Docker and Podman containers (image, state, published ports, restarts), then every change as it happens. Without `nux-sockguard` or a container runtime the host is still reported and the heartbeat carries `AGT-COL-001`.
 
 `nuxd` keeps what agents report in SQLite and in an in-memory index. Signed-in users read it with `GET /api/v1/hosts`, `/hosts/{id}`, `/containers` and `/containers/{id}` (cursor pagination: `?limit=&cursor=`; filters `status`, `host_id`, `state`, `include_gone`). `GET /api/v1/events` is a Server-Sent Events stream of changes (`host.created`, `host.updated`, `container.created`, `container.updated`, `container.removed`); it carries changes only, so reload through the lists after connecting and whenever a `resync` event arrives. Containers that disappear are kept, marked gone, and hidden unless `include_gone=true`.
-
-The token carries the gateway address and the CA fingerprint, so the agent verifies `nuxd` before it sends the secret. The key is created on the host and never leaves it; the certificate lasts 24 hours and renews itself after 16. The agent only dials out (port 8444). If the agent is revoked, its identity is damaged or its certificate expired while it was offline, it exits with status 78 and systemd does not restart it: run `nux agent enroll --force` with a new token.
 
 ## Project
 

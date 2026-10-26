@@ -47,6 +47,11 @@ archives:
     files:
       - src: cmd/nux/LICENSE
         dst: LICENSE
+      # Signed with the archive; the install script's --agent mode reads them from the verified tarball.
+      - src: deploy/systemd/nux-agent.service
+        dst: nux-agent.service
+      - src: deploy/systemd/nux-sockguard.service
+        dst: nux-sockguard.service
 
 checksum:
   name_template: checksums.txt

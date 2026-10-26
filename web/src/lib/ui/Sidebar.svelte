@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { router, sections } from '../router.svelte';
+  import { resolveRoute, router, sectionOf, sections } from '../router.svelte';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -9,6 +9,8 @@
   }
 
   let { id, collapsed }: Props = $props();
+  // Pages under a section (a host, say) keep the section marked as the place the user is in.
+  const current = $derived(sectionOf(resolveRoute(router.path)));
 </script>
 
 <nav {id} class="sidebar" class:collapsed aria-label="Main">
@@ -17,7 +19,11 @@
       <li>
         <a
           href={section.path}
-          aria-current={router.path === section.path ? 'page' : undefined}
+          aria-current={router.path === section.path
+            ? 'page'
+            : current === section.path
+              ? 'true'
+              : undefined}
           title={collapsed ? section.title : undefined}
         >
           <Icon name={section.icon} />
@@ -65,18 +71,13 @@
     background: var(--color-surface-sunken);
   }
 
+  a[aria-current='true'] {
+    font-weight: 600;
+  }
+
   a[aria-current='page'] {
     background: var(--color-accent);
     color: var(--color-accent-text);
     font-weight: 600;
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 </style>

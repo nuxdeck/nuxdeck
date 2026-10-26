@@ -40,6 +40,7 @@ check() { # check DESCRIPTION CONDITION...
 tag="v0.1.0-alpha.1"
 ver="${tag#v}"
 archive="nuxd_${ver}_linux_${arch}.tar.gz"
+agent_archive="nux_${ver}_linux_${arch}.tar.gz"
 site="$work/site"
 dest="$work/dest"
 
@@ -53,7 +54,12 @@ make_release() { # make_release [binary content]
 	chmod 0755 "$build/nuxd"
 	printf '[Service]\nExecStart=/usr/local/bin/nuxd\n' >"$build/nuxd.service"
 	tar -czf "$rel/$archive" -C "$build" nuxd nuxd.service
-	(cd "$rel" && sha256sum "$archive" >checksums.txt)
+	printf '#!/bin/sh\necho nux agent\n' >"$build/nux"
+	chmod 0755 "$build/nux"
+	printf '[Service]\nExecStart=/usr/local/bin/nux agent run\n' >"$build/nux-agent.service"
+	printf '[Service]\nExecStart=/usr/local/bin/nux sockguard\n' >"$build/nux-sockguard.service"
+	tar -czf "$rel/$agent_archive" -C "$build" nux nux-agent.service nux-sockguard.service
+	(cd "$rel" && sha256sum "$archive" "$agent_archive" >checksums.txt)
 	echo '{"mediaType":"fake-bundle"}' >"$rel/checksums.txt.sigstore.json"
 	printf '[{"tag_name": "%s", "prerelease": true}]\n' "$tag" >"$site/releases"
 }
@@ -66,6 +72,16 @@ COSIGN
 chmod +x "$work/fake-cosign"
 export FAKE_COSIGN_ARGS="$work/cosign.args"
 
+# A fake runuser records how the agent was enrolled: its arguments and exactly what arrived on stdin.
+cat >"$work/fake-runuser" <<'RUNUSER'
+#!/bin/sh
+echo "$@" >"$FAKE_RUNUSER_ARGS"
+cat >"$FAKE_RUNUSER_STDIN"
+exit "${FAKE_RUNUSER_EXIT:-0}"
+RUNUSER
+chmod +x "$work/fake-runuser"
+export FAKE_RUNUSER_ARGS="$work/runuser.args" FAKE_RUNUSER_STDIN="$work/runuser.stdin"
+
 make_release
 python3 -m http.server "$port" --bind 127.0.0.1 --directory "$site" >/dev/null 2>&1 &
 server_pid=$!
@@ -76,13 +92,15 @@ done
 
 # run_install ARGS... sets $out and $rc.
 run_install() {
-	rm -f "$FAKE_COSIGN_ARGS"
-	out="$(NUX_DESTDIR="$dest" NUX_ALLOW_HTTP=1 NUX_API_URL="http://127.0.0.1:$port" NUX_DOWNLOAD_URL="http://127.0.0.1:$port" \
+	rm -f "$FAKE_COSIGN_ARGS" "$FAKE_RUNUSER_ARGS" "$FAKE_RUNUSER_STDIN"
+	out="$(NUX_RUNUSER="$work/fake-runuser" NUX_DESTDIR="$dest" NUX_ALLOW_HTTP=1 NUX_API_URL="http://127.0.0.1:$port" NUX_DOWNLOAD_URL="http://127.0.0.1:$port" \
 		NUX_COSIGN_URL="http://127.0.0.1:$port/cosign" sh "$script" "$@" 2>&1)" && rc=0 || rc=$?
 }
 installed() { [ -e "$dest/usr/local/bin/nuxd" ]; }
 fresh() { rm -rf "$dest"; }
 contains() { [[ "$out" == *"$1"* ]]; }
+# not COMMAND...: succeeds when the command fails, usable as a check command.
+not() { ! "$@"; }
 # matches TEXT PATTERN: shell-glob match, usable as a check command.
 matches() {
 	# shellcheck disable=SC2254 # the caller passes a glob on purpose
@@ -168,6 +186,79 @@ check "refuses a downloaded cosign with the wrong checksum" contains "pinned che
 check "and never runs it" [ ! -e "$work/cosign-ran" ]
 check "and installs nothing" [ ! -e "$dest/usr/local/bin/nuxd" ]
 
+echo " agent mode (--agent --token)"
+token='nuxtok1.aHR0cHM6Ly9udXguZXhhbXBsZS5jb206ODQ0NA.8224ef67ccdc192ad6459f4fbf341ce2fcbe16decc79a0a11ccd402f13f392f4.nJRtSqRbn_lJDt8PiAvlqQEYlgVAa43fqyz7vR0QJf8'
+fresh
+run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$token"
+check "exits 0" [ "$rc" -eq 0 ]
+check "installs the nux binary, executable" [ -x "$dest/usr/local/bin/nux" ]
+check "installs the agent unit from the archive" grep -q 'nux agent run' "$dest/etc/systemd/system/nux-agent.service"
+check "installs the sockguard unit from the archive" grep -q 'nux sockguard' "$dest/etc/systemd/system/nux-sockguard.service"
+check "units are mode 644" [ "$(stat -c %a "$dest/etc/systemd/system/nux-agent.service")" = 644 ]
+check "does not install the server" [ ! -e "$dest/usr/local/bin/nuxd" ]
+check "leaves no .new file behind" [ ! -e "$dest/usr/local/bin/nux.new" ]
+check "verifies the agent archive through the same signed checksums" matches "$(cat "$FAKE_COSIGN_ARGS")" "verify-blob*checksums.txt --bundle*"
+check "creates the state directory private to its owner" [ "$(stat -c %a "$dest/var/lib/nux-agent")" = 700 ]
+check "enrols as the nux user with the token read from stdin" matches "$(cat "$FAKE_RUNUSER_ARGS")" "-u nux -- $dest/usr/local/bin/nux agent enroll --token-file - --state-dir $dest/var/lib/nux-agent"
+check "the token arrives on stdin exactly" [ "$(cat "$FAKE_RUNUSER_STDIN")" = "$token" ]
+check "the token is not in the enrolment arguments" not grep -q "nuxtok1" "$FAKE_RUNUSER_ARGS"
+check "the token is never printed" not contains "nuxtok1"
+check "says the agent is installed" contains "agent"
+
+echo " agent mode: token from the environment"
+fresh
+out="$(NUX_ENROLL_TOKEN="$token" NUX_RUNUSER="$work/fake-runuser" NUX_DESTDIR="$dest" NUX_ALLOW_HTTP=1 NUX_API_URL="http://127.0.0.1:$port" NUX_DOWNLOAD_URL="http://127.0.0.1:$port" \
+	sh "$script" --agent --version "$tag" --cosign "$work/fake-cosign" 2>&1)" && rc=0 || rc=$?
+check "NUX_ENROLL_TOKEN is used when --token is absent" eval '[ "$rc" -eq 0 ] && [ "$(cat "$FAKE_RUNUSER_STDIN")" = "$token" ]'
+
+echo " agent mode: refusals (nothing may be installed or enrolled)"
+fresh
+run_install --version "$tag" --cosign "$work/fake-cosign" --agent
+check "no token and no identity aborts" [ "$rc" -ne 0 ]
+check "and says how to get one" contains "Add host"
+check "before anything was installed" [ ! -e "$dest/usr/local/bin/nux" ]
+
+for bad in 'x' 'nuxtok1' 'nuxtok1.a b' 'nuxtok1.a;touch /tmp/pwned-agent' 'nuxtok1.$(touch /tmp/pwned-agent)' "nuxtok1.a'b" 'nuxtok1.a|b' 'nuxtok2.a.b.c' "nuxtok1.$(printf 'a%.0s' $(seq 1 1100))"; do
+	fresh
+	run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$bad"
+	check "rejects token \"${bad:0:30}\"" [ "$rc" -ne 0 ]
+	check "  installs nothing and enrols nobody" eval '[ ! -e "$dest/usr/local/bin/nux" ] && [ ! -e "$FAKE_RUNUSER_ARGS" ]'
+done
+check "no injected command ran" [ ! -e /tmp/pwned-agent ]
+
+fresh
+FAKE_COSIGN_EXIT=1 run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$token"
+check "a failing signature check aborts the agent install" [ "$rc" -ne 0 ]
+check "and installs and enrols nothing" eval '[ ! -e "$dest/usr/local/bin/nux" ] && [ ! -e "$FAKE_RUNUSER_ARGS" ]'
+
+fresh
+printf 'tampered' >>"$site/$tag/$agent_archive"
+run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$token"
+check "a tampered agent archive aborts" eval '[ "$rc" -ne 0 ] && contains "checksum mismatch"'
+check "and enrols nobody" [ ! -e "$FAKE_RUNUSER_ARGS" ]
+make_release
+
+fresh
+FAKE_RUNUSER_EXIT=1 run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$token"
+check "a failed enrolment aborts" [ "$rc" -ne 0 ]
+check "with an actionable message" contains "enrolment failed"
+check "and does not claim success" not contains "is installed"
+
+fresh
+run_install --version "$tag" --cosign "$work/fake-cosign" --token "$token"
+check "--token without --agent is refused" eval '[ "$rc" -ne 0 ] && contains "--token only makes sense with --agent"'
+
+echo " agent mode: an enrolled host keeps its identity"
+fresh
+mkdir -p "$dest/var/lib/nux-agent"
+echo '{}' >"$dest/var/lib/nux-agent/agent.json"
+run_install --version "$tag" --cosign "$work/fake-cosign" --agent
+check "re-running without a token upgrades the binary" eval '[ "$rc" -eq 0 ] && [ -x "$dest/usr/local/bin/nux" ]'
+check "and does not enrol again" eval '[ ! -e "$FAKE_RUNUSER_ARGS" ] && contains "already enrolled"'
+run_install --version "$tag" --cosign "$work/fake-cosign" --agent --token "$token"
+check "a token given to an enrolled host is not used" eval '[ "$rc" -eq 0 ] && [ ! -e "$FAKE_RUNUSER_ARGS" ]'
+check "the identity file is untouched" grep -q '{}' "$dest/var/lib/nux-agent/agent.json"
+
 echo " environment"
 fresh
 mkdir -p "$work/fakebin"
@@ -188,6 +279,7 @@ check "rejects unknown options" [ "$rc" -ne 0 ]
 out="$(sh "$script" --help 2>&1)" && rc=0 || rc=$?
 check "--help exits 0 and shows usage" [ "$rc" -eq 0 ]
 check "--help documents --version" contains "--version TAG"
+check "--help documents --agent and --token" eval 'contains "--agent" && contains "--token TOKEN"'
 
 echo
 if [ "$failures" -ne 0 ]; then

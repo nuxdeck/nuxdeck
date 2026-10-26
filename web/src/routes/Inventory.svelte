@@ -1,10 +1,276 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import Section from '../lib/ui/Section.svelte';
+  import { findSection } from '../lib/router.svelte';
+  import { formatTime } from '../lib/format';
+  import { inventory, type LiveStatus } from '../lib/inventory.svelte';
+  import Button from '../lib/ui/Button.svelte';
+  import EmptyState from '../lib/ui/EmptyState.svelte';
+  import FormError from '../lib/ui/FormError.svelte';
+  import Icon from '../lib/ui/Icon.svelte';
+  import StatusBadge from '../lib/ui/StatusBadge.svelte';
+
+  const section = findSection('/inventory');
+  let filter = $state('');
+
+  const hostName = $derived(new Map(inventory.hosts.map((h) => [h.id, h.hostname])));
+  const needle = $derived(filter.trim().toLowerCase());
+
+  const hosts = $derived(
+    inventory.hosts.filter(
+      (h) =>
+        !needle ||
+        [h.hostname, h.distro, h.facts.ips ?? ''].some((t) => t.toLowerCase().includes(needle)),
+    ),
+  );
+  const containers = $derived(
+    inventory.containers.filter(
+      (c) =>
+        !needle ||
+        [c.name, c.image, hostName.get(c.host_id) ?? ''].some((t) =>
+          t.toLowerCase().includes(needle),
+        ),
+    ),
+  );
+
+  const liveText: Record<LiveStatus, string> = {
+    idle: 'Not connected',
+    loading: 'Loading…',
+    live: 'Live',
+    reconnecting: 'Reconnecting…',
+    failed: 'Live updates unavailable',
+  };
+
+  function counts(hostId: string): string {
+    const all = inventory.containersOf(hostId);
+    return `${all.filter((c) => c.state === 'running').length} / ${all.length}`;
+  }
+
+  function retry(): void {
+    inventory.stop();
+    inventory.start();
+  }
 </script>
 
-<Section
-  path="/inventory"
-  emptyTitle="No hosts yet"
-  hint="Hosts and containers appear here when agents connect."
-/>
+<div class="head">
+  <div>
+    <h1 id="page-title" tabindex="-1">{section?.title}</h1>
+    <p class="question">{section?.question}</p>
+  </div>
+  <a class="button-link" href="/inventory/add"><Icon name="plus" size={16} /> Add host</a>
+</div>
+
+<p class="live" class:bad={inventory.status === 'failed'}>
+  <Icon
+    name={inventory.status === 'live'
+      ? 'checkCircle'
+      : inventory.status === 'failed'
+        ? 'alertTriangle'
+        : 'refresh'}
+    size={16}
+  />
+  {liveText[inventory.status]}
+</p>
+<p class="visually-hidden" role="status">{inventory.announcement}</p>
+
+{#if !inventory.loaded && inventory.status === 'failed'}
+  {#if inventory.failure}
+    <FormError error={inventory.failure} />
+  {:else}
+    <EmptyState title="Could not load the inventory"
+      >Check your connection, then try again.</EmptyState
+    >
+  {/if}
+  <p class="retry"><Button variant="secondary" onclick={retry}>Try again</Button></p>
+{:else if !inventory.loaded}
+  <p role="status">Loading the inventory…</p>
+{:else if inventory.hosts.length === 0}
+  <EmptyState title="No hosts yet">
+    Add your first host to see it and its containers here.
+  </EmptyState>
+  <p class="retry"><a class="button-link" href="/inventory/add">Add your first host</a></p>
+{:else}
+  <div class="tools">
+    <label for="inventory-filter">Filter</label>
+    <input
+      id="inventory-filter"
+      type="search"
+      placeholder="Name, image or IP"
+      autocomplete="off"
+      spellcheck="false"
+      bind:value={filter}
+    />
+    {#if inventory.pendingReorder > 0}
+      <p class="reorder" role="status">
+        {inventory.pendingReorder}
+        {inventory.pendingReorder === 1 ? 'item' : 'items'} changed.
+        <button type="button" onclick={() => inventory.refreshOrder()}>Refresh order</button>
+      </p>
+    {/if}
+  </div>
+
+  <h2>Hosts <span class="count">({hosts.length})</span></h2>
+  <div class="table-wrap">
+    <table class="data-table">
+      <caption class="visually-hidden">Hosts, problems first</caption>
+      <thead>
+        <tr>
+          <th scope="col">Status</th>
+          <th scope="col">Host</th>
+          <th scope="col">System</th>
+          <th scope="col">Addresses</th>
+          <th scope="col" class="num">Containers running</th>
+          <th scope="col">Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each hosts as h (h.id)}
+          <tr>
+            <td><StatusBadge status={h.status} /></td>
+            <th scope="row"><a href="/inventory/hosts/{h.id}">{h.hostname}</a></th>
+            <td>{h.distro || h.os}</td>
+            <td class="mono">{h.facts.ips ?? '—'}</td>
+            <td class="num">{counts(h.id)}</td>
+            <td>{formatTime(h.last_seen_at)}</td>
+          </tr>
+        {:else}
+          <tr><td colspan="6">No host matches the filter.</td></tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Containers <span class="count">({containers.length})</span></h2>
+  <div class="table-wrap">
+    <table class="data-table">
+      <caption class="visually-hidden">Containers, problems first</caption>
+      <thead>
+        <tr>
+          <th scope="col">State</th>
+          <th scope="col">Container</th>
+          <th scope="col">Host</th>
+          <th scope="col">Image</th>
+          <th scope="col" class="num">Published ports</th>
+          <th scope="col" class="num">Restarts</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each containers as c (c.id)}
+          <tr>
+            <td><StatusBadge status={c.state} /></td>
+            <th scope="row"><a href="/inventory/containers/{c.id}">{c.name}</a></th>
+            <td
+              ><a href="/inventory/hosts/{c.host_id}">{hostName.get(c.host_id) ?? 'Unknown host'}</a
+              ></td
+            >
+            <td class="mono wrap" title={c.image}>{c.image}</td>
+            <td class="num">{c.ports.length}</td>
+            <td class="num">{c.restart_count}</td>
+          </tr>
+        {:else}
+          <tr
+            ><td colspan="6"
+              >{inventory.containers.length === 0
+                ? 'No containers reported yet.'
+                : 'No container matches the filter.'}</td
+            ></tr
+          >
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{/if}
+
+<style>
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  h1 {
+    font-size: var(--font-size-xl);
+    line-height: 1.2;
+  }
+
+  h1:focus {
+    outline: none;
+  }
+
+  h2 {
+    margin: var(--space-6) 0 var(--space-2);
+    font-size: var(--font-size-md);
+  }
+
+  .count {
+    color: var(--color-text-muted);
+    font-weight: 400;
+  }
+
+  .question {
+    margin: var(--space-1) 0 var(--space-4);
+    color: var(--color-text-muted);
+  }
+
+  .live {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .live.bad {
+    color: var(--color-status-critical);
+    font-weight: 600;
+  }
+
+  .tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  label {
+    font-weight: 600;
+  }
+
+  input {
+    min-height: var(--target-size);
+    min-width: 16rem;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-1);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+  }
+
+  .reorder {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-1);
+    background: var(--color-status-warning-bg);
+    color: var(--color-status-warning);
+    font-weight: 600;
+  }
+
+  .reorder button {
+    min-height: var(--target-size);
+    padding: 0 var(--space-3);
+    border: 1px solid currentcolor;
+    border-radius: var(--radius-1);
+    background: none;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .retry {
+    margin-top: var(--space-3);
+  }
+</style>

@@ -40,13 +40,51 @@ export function findSection(path: string): RouteDef | undefined {
   return sections.find((s) => s.path === path);
 }
 
+export type Route =
+  | { kind: 'section'; path: string }
+  | { kind: 'add-host' }
+  | { kind: 'host'; id: string }
+  | { kind: 'container'; id: string }
+  | { kind: 'not-found' };
+
+// Item IDs are ULIDs (26 Crockford base32 characters); anything else cannot name an item.
+const ITEM_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/** Maps a pathname to the screen that serves it. */
+export function resolveRoute(path: string): Route {
+  if (findSection(path)) return { kind: 'section', path };
+  if (path === '/inventory/add') return { kind: 'add-host' };
+  const [, collection, id] = /^\/inventory\/(hosts|containers)\/([^/]+)$/.exec(path) ?? [];
+  if (collection && id && ITEM_ID.test(id)) {
+    return collection === 'hosts' ? { kind: 'host', id } : { kind: 'container', id };
+  }
+  return { kind: 'not-found' };
+}
+
+/** The section a route belongs to in the sidebar, for highlighting. */
+export function sectionOf(route: Route): string | undefined {
+  switch (route.kind) {
+    case 'section':
+      return route.path;
+    case 'add-host':
+    case 'host':
+    case 'container':
+      return '/inventory';
+    default:
+      return undefined;
+  }
+}
+
 class Router {
   path = $state(typeof window === 'undefined' ? '/' : window.location.pathname);
+  /** A page title that only the page knows, such as a host name; cleared on every navigation. */
+  titleOverride = $state<string | null>(null);
 
   constructor() {
     if (typeof window !== 'undefined') {
       window.addEventListener('popstate', () => {
         this.path = window.location.pathname;
+        this.titleOverride = null;
       });
     }
   }
@@ -55,6 +93,7 @@ class Router {
     if (to === this.path) return;
     window.history.pushState({}, '', to);
     this.path = to;
+    this.titleOverride = null;
   }
 }
 
