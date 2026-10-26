@@ -15,6 +15,9 @@ import (
 func TestAuthorize(t *testing.T) {
 	anon := Principal{}
 	admin := Principal{UserID: "u1", Roles: []Role{RoleAdmin}}
+	viewer := Principal{UserID: "u2", Roles: []Role{RoleViewer}}
+	operator := Principal{UserID: "u3", Roles: []Role{RoleOperator}}
+	roleless := Principal{UserID: "u4"} // signed in, but nothing binds a role to them
 	tests := []struct {
 		action   Action
 		who      Principal
@@ -28,6 +31,16 @@ func TestAuthorize(t *testing.T) {
 		{ActionLogout, admin, ""},
 		{ActionMeRead, anon, errcode.AuthDeny003},
 		{ActionMeRead, admin, ""},
+		{ActionInventoryRead, anon, errcode.AuthDeny003},
+		{ActionInventoryRead, viewer, ""},
+		{ActionInventoryRead, operator, ""},
+		{ActionInventoryRead, admin, ""},
+		{ActionInventoryRead, roleless, errcode.AuthDeny005},
+		{ActionEventsStream, anon, errcode.AuthDeny003},
+		{ActionEventsStream, viewer, ""},
+		{ActionEventsStream, roleless, errcode.AuthDeny005},
+		{ActionAgentRevoke, viewer, errcode.AuthDeny005}, // admin-only actions stay out of a viewer's reach
+		{ActionAgentTokenCreate, operator, errcode.AuthDeny005},
 		{"hosts.read", admin, errcode.AuthDeny005}, // unknown actions fail closed, even for an admin
 		{"", admin, errcode.AuthDeny005},
 	}

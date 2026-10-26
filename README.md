@@ -64,6 +64,8 @@ Container data comes only through `nux sockguard` (`deploy/systemd/nux-sockguard
 
 Once connected, the agent reports the host (OS, kernel, CPU, memory, disks, IPs, boot time) and its Docker and Podman containers (image, state, published ports, restarts), then every change as it happens. Without `nux-sockguard` or a container runtime the host is still reported and the heartbeat carries `AGT-COL-001`.
 
+`nuxd` keeps what agents report in SQLite and in an in-memory index. Signed-in users read it with `GET /api/v1/hosts`, `/hosts/{id}`, `/containers` and `/containers/{id}` (cursor pagination: `?limit=&cursor=`; filters `status`, `host_id`, `state`, `include_gone`). `GET /api/v1/events` is a Server-Sent Events stream of changes (`host.created`, `host.updated`, `container.created`, `container.updated`, `container.removed`); it carries changes only, so reload through the lists after connecting and whenever a `resync` event arrives. Containers that disappear are kept, marked gone, and hidden unless `include_gone=true`.
+
 The token carries the gateway address and the CA fingerprint, so the agent verifies `nuxd` before it sends the secret. The key is created on the host and never leaves it; the certificate lasts 24 hours and renews itself after 16. The agent only dials out (port 8444). If the agent is revoked, its identity is damaged or its certificate expired while it was offline, it exits with status 78 and systemd does not restart it: run `nux agent enroll --force` with a new token.
 
 ## Project

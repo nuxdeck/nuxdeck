@@ -93,7 +93,7 @@ type Options struct {
 	// Heartbeat overrides DefaultHeartbeat; tests shorten it.
 	Heartbeat time.Duration
 	// OnMessage receives every message an agent sends after Hello (inventory, metrics, ...), in order,
-	// on the stream's goroutine. It must not block.
+	// on the stream's goroutine. Keep it short: a slow hook delays that agent's heartbeats.
 	OnMessage func(agentID string, m *agentv1.AgentMessage)
 	// OnPresence is told when an agent goes online or offline. It must not block.
 	OnPresence func(agentID string, online bool)

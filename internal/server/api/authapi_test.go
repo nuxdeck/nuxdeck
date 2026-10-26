@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 )
@@ -50,6 +51,8 @@ type authEnv struct {
 	token   *auth.SetupToken
 	logs    *syncLog
 	revoker *fakeRevoker
+	pki     *pki.Service
+	inv     *inventory.Service
 }
 
 func newAuthEnv(t *testing.T) *authEnv {
@@ -79,9 +82,14 @@ func newAuthEnv(t *testing.T) *authEnv {
 		t.Fatal(err)
 	}
 	rv := &fakeRevoker{}
+	pkiSvc := pki.NewService(db, ca)
+	inv, err := inventory.NewService(db, log)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &authEnv{
-		t: t, db: db, token: token, logs: logs, revoker: rv,
-		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pki.NewService(db, ca), GatewayURL: "https://nux.example.com:8444", Revoker: rv}),
+		t: t, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv,
+		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pkiSvc, GatewayURL: "https://nux.example.com:8444", Revoker: rv, Inventory: inv}),
 	}
 }
 
@@ -389,7 +397,7 @@ func TestNothingSecretReachesLogsOrErrors(t *testing.T) {
 
 func TestUnknownAPIRoutesStayJSON404AndNoAuthMeansNoRoutes(t *testing.T) {
 	e := newAuthEnv(t)
-	if rec := e.do(req{method: "GET", path: "/api/v1/hosts"}); rec.Code != http.StatusNotFound || errCode(t, rec) != "API-NF-001" {
+	if rec := e.do(req{method: "GET", path: "/api/v1/no-such-route"}); rec.Code != http.StatusNotFound || errCode(t, rec) != "API-NF-001" {
 		t.Errorf("unknown route: %d %q", rec.Code, rec.Body)
 	}
 	bare := Handler(Options{Log: quiet, Ready: fakeReady{}})

@@ -26,6 +26,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
@@ -121,8 +122,13 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	}
 	gwURL := gatewayURL(cfg.Gateway.PublicURL)
 	pkiSvc := pki.NewService(db, ca)
+	inv, err := inventory.NewService(db, log)
+	if err != nil {
+		return err
+	}
 	gw, err := gateway.New(ctx, gateway.Options{
 		Log: log, Repo: db, Enroller: pkiSvc, Renewer: pkiSvc, CA: ca,
+		OnMessage: inv.HandleMessage, OnPresence: inv.SetPresence,
 		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
 	})
 	if err != nil {
@@ -130,7 +136,7 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	}
 	handler := api.Handler(api.Options{
 		Log: log, Ready: db, Version: version, UI: ui, Auth: svc,
-		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw,
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv,
 	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {

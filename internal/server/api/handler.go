@@ -16,6 +16,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 )
 
@@ -44,6 +45,8 @@ type Options struct {
 	GatewayURL string
 	// Revoker enables agent revocation; it needs Auth.
 	Revoker Revoker
+	// Inventory serves hosts, containers and the live event stream; it needs Auth.
+	Inventory *inventory.Service
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -65,6 +68,9 @@ func Handler(o Options) http.Handler {
 	if o.Auth != nil {
 		a := &authAPI{svc: o.Auth, log: o.Log}
 		a.register(mux)
+		if o.Inventory != nil {
+			(&inventoryAPI{authAPI: a, inv: o.Inventory}).register(mux)
+		}
 		if o.PKI != nil {
 			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL, revoker: o.Revoker}).register(mux)
 		}

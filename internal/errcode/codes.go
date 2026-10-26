@@ -25,6 +25,7 @@ const (
 	APINF001     Code = "API-NF-001"
 	APIVal001    Code = "API-VAL-001"
 	APIInt001    Code = "API-INT-001"
+	APILim001    Code = "API-LIM-001"
 	AuthPwd001   Code = "AUTH-PWD-001" //nolint:gosec // an error code, not a credential
 	AuthDeny001  Code = "AUTH-DENY-001"
 	AuthDeny002  Code = "AUTH-DENY-002"
@@ -81,6 +82,7 @@ func Entries() []Entry {
 		{APINF001, "Resource not found", "No such endpoint or resource.", "Check the URL against the API documentation."},
 		{APIVal001, "Invalid request", "The request body is missing, malformed or contains unknown fields.", "Send a JSON body with Content-Type: application/json and only the documented fields."},
 		{APIInt001, "Internal error", "Something went wrong on the server.", "Try again; if it keeps happening, report the request ID from the X-Request-ID response header."},
+		{APILim001, "Too many live connections", "The server is serving as many live update streams as it allows.", "Close other tabs or try again in a moment."},
 		{AuthPwd001, "Password not accepted", "The password does not meet the password policy.", "Use at least 12 characters and avoid common or breached passwords."},
 		{AuthDeny001, "Sign-in failed", "The email or password is incorrect.", "Check the email and password and try again."},
 		{AuthDeny002, "Too many attempts", "Too many failed attempts from this address.", "Wait a few minutes and try again."},

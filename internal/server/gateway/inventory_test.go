@@ -19,6 +19,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/agent/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/agent/run"
 	"github.com/nuxdeck/nuxdeck/internal/agent/sockguard"
+	srvinv "github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 )
 
@@ -209,4 +210,84 @@ func TestINV_AMissingRuntimeShowsUpInHeartbeats(t *testing.T) {
 		}
 		return false
 	}, 5*time.Second)
+}
+
+func waitFor(t *testing.T, what string, within time.Duration, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// INV-1, INV-2 and AGT-7 from a container on the host to the server's index and its live feed.
+func TestINV_AgentToIndexAndLiveFeed(t *testing.T) {
+	e := newEnv(t)
+	guardSock, docker := startDockerBehindSockguard(t)
+	docker.set("aaa111", dockerInspect("aaa111", "web", "running"))
+	sub, err := e.inv.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+
+	dir := t.TempDir()
+	id := e.enrollAgent(dir)
+	inv := inventory.New(inventory.Config{SockguardSocket: guardSock, ReconnectDelay: 10 * time.Millisecond})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go inv.Run(ctx)
+	r := e.runAgent(dir, func(c *run.Config) { c.Inventory = inv })
+
+	index := e.inv.Index()
+	names := func() map[string]string {
+		out := map[string]string{}
+		for _, c := range index.Containers(srvinv.ContainerFilter{}, "", 50).Items {
+			out[c.Name] = c.State
+		}
+		return out
+	}
+	waitFor(t, "the host and its container in the index", 5*time.Second, func() bool { return names()["web"] == "running" })
+	host, ok := index.HostByAgent(id)
+	if !ok || host.Hostname == "" || host.Kernel == "" || host.MemoryBytes == 0 || host.Facts["ips"] == "" && host.Facts["boot_time_unix"] == "" {
+		t.Fatalf("host = %+v", host)
+	}
+	waitFor(t, "the host to show online", 5*time.Second, func() bool { h, _ := index.HostByAgent(id); return h.Status == "online" })
+
+	// A container starting on the host reaches the index and the live feed well inside 10 seconds.
+	started := time.Now()
+	docker.set("bbb222", dockerInspect("bbb222", "worker", "running"))
+	docker.events <- `{"Type":"container","Action":"start","Actor":{"ID":"bbb222"}}`
+	waitFor(t, "the new container", 8*time.Second, func() bool { return names()["worker"] == "running" })
+	if took := time.Since(started); took > 5*time.Second {
+		t.Errorf("a change took %v to reach the index (INV-2 allows 10 s to the UI)", took)
+	}
+	created := 0
+	for len(sub.C) > 0 {
+		if ev := <-sub.C; ev.Type == srvinv.EventContainerCreated {
+			created++
+		}
+	}
+	if created != 2 {
+		t.Errorf("%d container.created events, want 2 (web and worker)", created)
+	}
+
+	// Stopping the agent shows the host offline; starting it again does not duplicate anything.
+	r.stop()
+	_ = r.wait(t, 5*time.Second)
+	waitFor(t, "the host to show offline", 5*time.Second, func() bool { h, _ := index.HostByAgent(id); return h.Status == "offline" })
+	r2 := e.runAgent(dir, func(c *run.Config) { c.Inventory = inv })
+	defer r2.stop()
+	waitFor(t, "the host to come back online", 5*time.Second, func() bool { h, _ := index.HostByAgent(id); return h.Status == "online" })
+	time.Sleep(200 * time.Millisecond)
+	if n := len(index.Containers(srvinv.ContainerFilter{}, "", 50).Items); n != 2 {
+		t.Errorf("%d containers after a reconnect, want 2", n)
+	}
+	for len(sub.C) > 0 {
+		if ev := <-sub.C; ev.Type == srvinv.EventContainerCreated {
+			t.Errorf("a reconnect re-announced a container as created: %+v", ev)
+		}
+	}
 }

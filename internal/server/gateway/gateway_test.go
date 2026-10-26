@@ -26,6 +26,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/audit"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
@@ -48,6 +49,7 @@ type env struct {
 	addr     string
 	events   chan presence
 	msgs     chan *agentv1.AgentMessage
+	inv      *inventory.Service
 	stopGW   context.CancelFunc
 	gwStoped chan struct{}
 }
@@ -74,6 +76,9 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 	}
 	e := &env{t: t, dir: dir, db: db, ca: ca, pki: pki.NewService(db, ca), events: make(chan presence, 64), msgs: make(chan *agentv1.AgentMessage, 1024), gwStoped: make(chan struct{})}
 
+	if e.inv, err = inventory.NewService(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
 	var repo gateway.Repository = db
 	if wrap != nil {
 		repo = wrap(db)
@@ -82,8 +87,12 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: repo, Enroller: e.pki, Renewer: e.pki, CA: ca,
 		ServerCert: ca.ServerCertificates([]string{"localhost", "127.0.0.1"}).GetCertificate,
 		Heartbeat:  beat,
-		OnPresence: func(id string, online bool) { e.events <- presence{id, online} },
-		OnMessage: func(_ string, m *agentv1.AgentMessage) {
+		OnPresence: func(id string, online bool) {
+			e.inv.SetPresence(id, online)
+			e.events <- presence{id, online}
+		},
+		OnMessage: func(id string, m *agentv1.AgentMessage) {
+			e.inv.HandleMessage(id, m)
 			select {
 			case e.msgs <- m:
 			default:

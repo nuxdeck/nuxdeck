@@ -21,6 +21,8 @@ const (
 	ActionMeRead           Action = "me.read"
 	ActionAgentTokenCreate Action = "agents.token.create" //nolint:gosec // an action name, not a credential
 	ActionAgentRevoke      Action = "agents.revoke"
+	ActionInventoryRead    Action = "inventory.read"
+	ActionEventsStream     Action = "events.stream"
 )
 
 // Principal is the caller. The zero value is anonymous.
@@ -42,6 +44,7 @@ type requirement int
 const (
 	public requirement = iota + 1 // anyone, signed in or not
 	signedIn
+	viewer
 	admin
 )
 
@@ -55,6 +58,8 @@ var rules = map[Action]requirement{
 	ActionMeRead:           signedIn,
 	ActionAgentTokenCreate: admin,
 	ActionAgentRevoke:      admin,
+	ActionInventoryRead:    viewer,
+	ActionEventsStream:     viewer,
 }
 
 // Authorize returns nil if p may perform a, and an AUTH-DENY error otherwise.
@@ -68,6 +73,14 @@ func Authorize(p Principal, a Action) error {
 			return nil
 		}
 		return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
+	case viewer:
+		if !p.Authenticated() {
+			return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
+		}
+		if p.HasRole(RoleViewer) || p.HasRole(RoleOperator) || p.HasRole(RoleAdmin) {
+			return nil
+		}
+		return errcode.New(errcode.AuthDeny005, "action %s needs the viewer role", a)
 	case admin:
 		if !p.Authenticated() {
 			return errcode.New(errcode.AuthDeny003, "action %s needs a signed-in user", a)
