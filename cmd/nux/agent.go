@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
+	"github.com/nuxdeck/nuxdeck/internal/agent/checks"
 	"github.com/nuxdeck/nuxdeck/internal/agent/enroll"
 	"github.com/nuxdeck/nuxdeck/internal/agent/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/agent/logs"
@@ -139,7 +140,7 @@ func agentRun(ctx context.Context, args []string, settings cli.Settings, stderr 
 	go met.Run(ctx)
 	err := agentrun.Run(ctx, agentrun.Config{
 		StateDir: *stateDir, Version: version, Log: log, Inventory: inv, Metrics: met,
-		Logs: logs.New(logs.Config{SockguardSocket: *sockSocket, Log: log}),
+		Logs: logs.New(logs.Config{SockguardSocket: *sockSocket, Log: log}), Checks: checks.New(log, 0),
 	})
 	switch errcode.CodeOf(err) {
 	case "":

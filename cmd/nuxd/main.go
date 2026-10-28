@@ -24,6 +24,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/checks"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
@@ -31,7 +32,9 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/logs"
 	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
+	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
+	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 	"github.com/nuxdeck/nuxdeck/web"
@@ -100,6 +103,11 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 		}
 	}()
 
+	secretBox, err := openSecrets(ctx, db, cfg, getenv, log)
+	if err != nil {
+		return err
+	}
+
 	hostnames := cfg.TLS.Hostnames
 	if h, err := os.Hostname(); err == nil && h != "" {
 		hostnames = append(hostnames, h)
@@ -143,7 +151,11 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 			log.Error("close metrics store", "error", err)
 		}
 	}()
-	var gw *gateway.Gateway // set below; the log broker sends through it
+	var gw *gateway.Gateway // set below; the log broker and the check engine send through it
+	checkSvc := checks.New(checks.Options{
+		DB: db, Secrets: secretBox, Agents: db, Log: log, BlockPrivate: cfg.Checks.BlockPrivate, MaxConcurrent: cfg.Checks.MaxConcurrent,
+		Sender: senderFunc(func(agentID string, m *agentv1.ServerMessage) error { return gw.SendToAgent(agentID, m) }),
+	})
 	logBroker := logs.NewBroker(logs.Options{Log: log, Sender: senderFunc(func(agentID string, m *agentv1.ServerMessage) error {
 		return gw.SendToAgent(agentID, m)
 	})})
@@ -154,18 +166,29 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 			inv.HandleMessage(agentID, m)
 			mt.HandleMessage(agentID, m)
 			logBroker.HandleMessage(agentID, m)
+			checkSvc.HandleMessage(agentID, m)
 		}, OnPresence: func(agentID string, online bool) {
 			inv.SetPresence(agentID, online)
 			logBroker.AgentGone(agentID) // a new or lost connection ends the streams of the old one
+			if !online {
+				checkSvc.AgentGone(agentID)
+			}
 		},
 		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
 	})
 	if err != nil {
 		return err
 	}
+	statusSvc := statuspages.New(statuspages.Options{DB: db, Checks: checkSvc, Log: log})
+	statusCtx, stopStatus := context.WithCancel(ctx)
+	statusDone := make(chan struct{})
+	go func() { defer close(statusDone); statusSvc.Run(statusCtx) }()
+	defer func() { stopStatus(); <-statusDone }()
+	alertSvc, alertChannels, stopAlerting := startAlerting(ctx, db, secretBox, checkSvc, inv, mt, cfg, log)
+	defer stopAlerting()
 	handler := api.Handler(api.Options{
-		Log: log, Ready: db, Version: version, UI: ui, Auth: svc,
-		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Logs: logBroker, Audit: db,
+		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, StatusPages: statusSvc,
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Checks: checkSvc, Logs: logBroker, Audit: db, Alerting: alertSvc, Channels: alertChannels,
 	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
@@ -178,11 +201,33 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 
 	log.Info("nuxd started", "version", version, "https_addr", srv.HTTPSAddr(), "redirect_addr", srv.RedirectAddr(), "data_dir", cfg.DataDir)
 	log.Info("agent gateway listening", "addr", gwLn.Addr().String(), "public_url", gwURL)
-	if err := serveAll(ctx, srv, gw, gwLn); err != nil {
+	if err := serveAll(ctx, srv, gw, gwLn, checkSvc); err != nil {
 		return err
 	}
 	log.Info("nuxd stopped")
 	return nil
+}
+
+// openSecrets loads the master key and refuses to continue if a key we just generated
+// meets a database that already holds secrets sealed under some other key.
+func openSecrets(ctx context.Context, db *store.Store, cfg config.Config, getenv func(string) string, log *slog.Logger) (*secrets.Box, error) {
+	key, created, err := secrets.LoadMasterKey(cfg.DataDir, cfg.Secrets.MasterKeyFile, getenv)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key)
+	if created {
+		has, err := secrets.Any(ctx, db.DB())
+		if err != nil {
+			return nil, errcode.Wrap(errcode.SRVIO001, "check for stored secrets", err)
+		}
+		if has {
+			_ = os.Remove(filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+			return nil, errcode.New(errcode.SRVSec001, "the database holds secrets but no master key was found; restore the original key (NUXD_MASTER_KEY, secrets.master_key_file or %s)", filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+		}
+		log.Info("generated a new master key", "file", filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+	}
+	return secrets.New(key)
 }
 
 // senderFunc adapts a function to logs.Sender.
@@ -191,15 +236,16 @@ type senderFunc func(agentID string, m *agentv1.ServerMessage) error
 func (f senderFunc) SendToAgent(agentID string, m *agentv1.ServerMessage) error { return f(agentID, m) }
 
 // serveAll runs the web server and the agent gateway; when either stops, so does the other.
-func serveAll(ctx context.Context, srv *api.Server, gw *gateway.Gateway, gwLn net.Listener) error {
+func serveAll(ctx context.Context, srv *api.Server, gw *gateway.Gateway, gwLn net.Listener, chk *checks.Service) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() { errs <- srv.Serve(ctx) }()
 	go func() { errs <- gw.Serve(ctx, gwLn) }()
+	go func() { errs <- chk.Run(ctx) }()
 	first := <-errs
 	cancel()
-	return errors.Join(first, <-errs)
+	return errors.Join(first, <-errs, <-errs)
 }
 
 // gatewayHosts lists the names and addresses the gateway certificate must cover.

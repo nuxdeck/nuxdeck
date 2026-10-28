@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -17,9 +18,13 @@ import (
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/checks"
 	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
+	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
+	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
+	"github.com/nuxdeck/nuxdeck/pkg/probe"
 )
 
 const (
@@ -53,6 +58,9 @@ type authEnv struct {
 	revoker *fakeRevoker
 	pki     *pki.Service
 	inv     *inventory.Service
+	checks  *checks.Service
+	pages   *statuspages.Service
+	clock   *testClock
 	dir     string
 }
 
@@ -88,9 +96,23 @@ func newAuthEnv(t *testing.T) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	key := make([]byte, secrets.KeyLen)
+	_, _ = rand.Read(key)
+	box, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &testClock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	chk := checks.New(checks.Options{
+		DB: db, Secrets: box, Agents: db, Log: log, Inline: true, Clock: clock,
+		Exec: func(context.Context, probe.Policy, probe.Spec) probe.Result {
+			return probe.Result{Status: probe.StatusUp, Latency: 7 * time.Millisecond}
+		},
+	})
+	pages := statuspages.New(statuspages.Options{DB: db, Checks: chk, Log: log, Now: clock.Now})
 	return &authEnv{
-		t: t, dir: dir, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv,
-		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pkiSvc, GatewayURL: "https://nux.example.com:8444", Revoker: rv, Inventory: inv}),
+		t: t, dir: dir, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv, checks: chk, pages: pages, clock: clock,
+		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pkiSvc, GatewayURL: "https://nux.example.com:8444", Revoker: rv, Inventory: inv, Checks: chk, StatusPages: pages}),
 	}
 }
 

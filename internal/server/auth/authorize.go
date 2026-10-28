@@ -27,6 +27,22 @@ const (
 	ActionMetricsRead      Action = "metrics.read"
 	ActionItemMetaUpdate   Action = "items.meta.update"
 	ActionSearch           Action = "search.read"
+	ActionChecksRead       Action = "checks.read"
+	ActionChecksWrite      Action = "checks.write"
+	ActionChecksRun        Action = "checks.run"
+	ActionAlertsRead       Action = "alerts.read"
+	ActionAlertsAck        Action = "alerts.ack"
+	ActionRulesRead        Action = "rules.read"
+	ActionRulesWrite       Action = "rules.write"
+	ActionSilencesRead     Action = "silences.read"
+	ActionSilencesWrite    Action = "silences.write"
+	ActionChannelsRead     Action = "channels.read"
+	ActionChannelsWrite    Action = "channels.write"
+	ActionChannelsTest     Action = "channels.test"
+	ActionRoutesRead       Action = "routes.read"
+	ActionRoutesWrite      Action = "routes.write"
+	ActionStatusPagesRead  Action = "statuspages.read"
+	ActionStatusPagesWrite Action = "statuspages.write"
 )
 
 // Principal is the caller. The zero value is anonymous.
@@ -69,6 +85,22 @@ var rules = map[Action]requirement{
 	ActionMetricsRead:      viewer,
 	ActionItemMetaUpdate:   operator,
 	ActionSearch:           viewer,
+	ActionChecksRead:       viewer,
+	ActionChecksWrite:      operator,
+	ActionChecksRun:        operator,
+	ActionAlertsRead:       viewer,
+	ActionAlertsAck:        operator,
+	ActionRulesRead:        viewer,
+	ActionRulesWrite:       operator,
+	ActionSilencesRead:     viewer,
+	ActionSilencesWrite:    operator,
+	ActionChannelsRead:     admin,
+	ActionChannelsWrite:    admin,
+	ActionChannelsTest:     admin,
+	ActionRoutesRead:       admin,
+	ActionRoutesWrite:      admin,
+	ActionStatusPagesRead:  viewer,
+	ActionStatusPagesWrite: operator,
 }
 
 // Authorize returns nil if p may perform a, and an AUTH-DENY error otherwise.

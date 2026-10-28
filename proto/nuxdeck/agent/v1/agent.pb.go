@@ -1909,7 +1909,9 @@ type CheckResult struct {
 	StartedAtUnixMs int64              `protobuf:"varint,4,opt,name=started_at_unix_ms,json=startedAtUnixMs,proto3" json:"started_at_unix_ms,omitempty"`
 	LatencyMs       uint32             `protobuf:"varint,5,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
 	// Stable code such as CHK-HTTP-001 when status is DOWN.
-	ErrorCode     string `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorCode string `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// Short fixed-vocabulary note such as "status 503" or "days_remaining=9"; never target content.
+	Detail        string `protobuf:"bytes,7,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1982,6 +1984,13 @@ func (x *CheckResult) GetLatencyMs() uint32 {
 func (x *CheckResult) GetErrorCode() string {
 	if x != nil {
 		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *CheckResult) GetDetail() string {
+	if x != nil {
+		return x.Detail
 	}
 	return ""
 }
@@ -2693,8 +2702,17 @@ type HttpCheck struct {
 	// Empty means any 2xx.
 	ExpectedStatus []uint32 `protobuf:"varint,4,rep,packed,name=expected_status,json=expectedStatus,proto3" json:"expected_status,omitempty"`
 	VerifyTls      bool     `protobuf:"varint,5,opt,name=verify_tls,json=verifyTls,proto3" json:"verify_tls,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	Body           []byte   `protobuf:"bytes,6,opt,name=body,proto3" json:"body,omitempty"`
+	// Substring the response body must contain; empty disables the check.
+	Keyword string `protobuf:"bytes,7,opt,name=keyword,proto3" json:"keyword,omitempty"`
+	// Dotted path such as a.b[0].c, with json_op "exists" or "equals" (json_value is the expected scalar).
+	JsonPath      string `protobuf:"bytes,8,opt,name=json_path,json=jsonPath,proto3" json:"json_path,omitempty"`
+	JsonOp        string `protobuf:"bytes,9,opt,name=json_op,json=jsonOp,proto3" json:"json_op,omitempty"`
+	JsonValue     string `protobuf:"bytes,10,opt,name=json_value,json=jsonValue,proto3" json:"json_value,omitempty"`
+	MaxRedirects  uint32 `protobuf:"varint,11,opt,name=max_redirects,json=maxRedirects,proto3" json:"max_redirects,omitempty"`
+	MaxBodyBytes  uint32 `protobuf:"varint,12,opt,name=max_body_bytes,json=maxBodyBytes,proto3" json:"max_body_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HttpCheck) Reset() {
@@ -2762,6 +2780,55 @@ func (x *HttpCheck) GetVerifyTls() bool {
 	return false
 }
 
+func (x *HttpCheck) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *HttpCheck) GetKeyword() string {
+	if x != nil {
+		return x.Keyword
+	}
+	return ""
+}
+
+func (x *HttpCheck) GetJsonPath() string {
+	if x != nil {
+		return x.JsonPath
+	}
+	return ""
+}
+
+func (x *HttpCheck) GetJsonOp() string {
+	if x != nil {
+		return x.JsonOp
+	}
+	return ""
+}
+
+func (x *HttpCheck) GetJsonValue() string {
+	if x != nil {
+		return x.JsonValue
+	}
+	return ""
+}
+
+func (x *HttpCheck) GetMaxRedirects() uint32 {
+	if x != nil {
+		return x.MaxRedirects
+	}
+	return 0
+}
+
+func (x *HttpCheck) GetMaxBodyBytes() uint32 {
+	if x != nil {
+		return x.MaxBodyBytes
+	}
+	return 0
+}
+
 type TcpCheck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
@@ -2820,7 +2887,9 @@ type DnsCheck struct {
 	// "A", "AAAA", "CNAME", "MX", "TXT" and so on.
 	RecordType string `protobuf:"bytes,2,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
 	// Optional resolver, host:port; empty uses the host's resolver.
-	Resolver      string `protobuf:"bytes,3,opt,name=resolver,proto3" json:"resolver,omitempty"`
+	Resolver string `protobuf:"bytes,3,opt,name=resolver,proto3" json:"resolver,omitempty"`
+	// Every value listed must be among the answers; empty only requires an answer.
+	Expected      []string `protobuf:"bytes,4,rep,name=expected,proto3" json:"expected,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2876,12 +2945,22 @@ func (x *DnsCheck) GetResolver() string {
 	return ""
 }
 
+func (x *DnsCheck) GetExpected() []string {
+	if x != nil {
+		return x.Expected
+	}
+	return nil
+}
+
 type TlsCheck struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Host  string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
 	Port  uint32                 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
 	// Report DOWN when the certificate expires within this many days.
-	WarnDays      uint32 `protobuf:"varint,3,opt,name=warn_days,json=warnDays,proto3" json:"warn_days,omitempty"`
+	WarnDays    uint32 `protobuf:"varint,3,opt,name=warn_days,json=warnDays,proto3" json:"warn_days,omitempty"`
+	VerifyChain bool   `protobuf:"varint,4,opt,name=verify_chain,json=verifyChain,proto3" json:"verify_chain,omitempty"`
+	// SNI and name to verify; empty uses host.
+	ServerName    string `protobuf:"bytes,5,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2935,6 +3014,20 @@ func (x *TlsCheck) GetWarnDays() uint32 {
 		return x.WarnDays
 	}
 	return 0
+}
+
+func (x *TlsCheck) GetVerifyChain() bool {
+	if x != nil {
+		return x.VerifyChain
+	}
+	return false
+}
+
+func (x *TlsCheck) GetServerName() string {
+	if x != nil {
+		return x.ServerName
+	}
+	return ""
 }
 
 type PingCheck struct {
@@ -3234,7 +3327,7 @@ const file_nuxdeck_agent_v1_agent_proto_rawDesc = "" +
 	"\x0eSOURCE_JOURNAL\x10\x03\"A\n" +
 	"\x0eLogStreamEnded\x12\x1b\n" +
 	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12\x12\n" +
-	"\x04code\x18\x02 \x01(\tR\x04code\"\xaa\x02\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\"\xc2\x02\n" +
 	"\vCheckResult\x12\x19\n" +
 	"\bcheck_id\x18\x01 \x01(\tR\acheckId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12<\n" +
@@ -3243,7 +3336,8 @@ const file_nuxdeck_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"latency_ms\x18\x05 \x01(\rR\tlatencyMs\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\x06 \x01(\tR\terrorCode\"@\n" +
+	"error_code\x18\x06 \x01(\tR\terrorCode\x12\x16\n" +
+	"\x06detail\x18\a \x01(\tR\x06detail\"@\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\r\n" +
 	"\tSTATUS_UP\x10\x01\x12\x0f\n" +
@@ -3294,29 +3388,42 @@ const file_nuxdeck_agent_v1_agent_proto_rawDesc = "" +
 	"\x03dns\x18\x06 \x01(\v2\x1a.nuxdeck.agent.v1.DnsCheckH\x00R\x03dns\x12.\n" +
 	"\x03tls\x18\a \x01(\v2\x1a.nuxdeck.agent.v1.TlsCheckH\x00R\x03tls\x121\n" +
 	"\x04ping\x18\b \x01(\v2\x1b.nuxdeck.agent.v1.PingCheckH\x00R\x04pingB\x06\n" +
-	"\x04spec\"\xfd\x01\n" +
+	"\x04spec\"\xcb\x03\n" +
 	"\tHttpCheck\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12B\n" +
 	"\aheaders\x18\x03 \x03(\v2(.nuxdeck.agent.v1.HttpCheck.HeadersEntryR\aheaders\x12'\n" +
 	"\x0fexpected_status\x18\x04 \x03(\rR\x0eexpectedStatus\x12\x1d\n" +
 	"\n" +
-	"verify_tls\x18\x05 \x01(\bR\tverifyTls\x1a:\n" +
+	"verify_tls\x18\x05 \x01(\bR\tverifyTls\x12\x12\n" +
+	"\x04body\x18\x06 \x01(\fR\x04body\x12\x18\n" +
+	"\akeyword\x18\a \x01(\tR\akeyword\x12\x1b\n" +
+	"\tjson_path\x18\b \x01(\tR\bjsonPath\x12\x17\n" +
+	"\ajson_op\x18\t \x01(\tR\x06jsonOp\x12\x1d\n" +
+	"\n" +
+	"json_value\x18\n" +
+	" \x01(\tR\tjsonValue\x12#\n" +
+	"\rmax_redirects\x18\v \x01(\rR\fmaxRedirects\x12$\n" +
+	"\x0emax_body_bytes\x18\f \x01(\rR\fmaxBodyBytes\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"2\n" +
 	"\bTcpCheck\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
-	"\x04port\x18\x02 \x01(\rR\x04port\"[\n" +
+	"\x04port\x18\x02 \x01(\rR\x04port\"w\n" +
 	"\bDnsCheck\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vrecord_type\x18\x02 \x01(\tR\n" +
 	"recordType\x12\x1a\n" +
-	"\bresolver\x18\x03 \x01(\tR\bresolver\"O\n" +
+	"\bresolver\x18\x03 \x01(\tR\bresolver\x12\x1a\n" +
+	"\bexpected\x18\x04 \x03(\tR\bexpected\"\x93\x01\n" +
 	"\bTlsCheck\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1b\n" +
-	"\twarn_days\x18\x03 \x01(\rR\bwarnDays\"5\n" +
+	"\twarn_days\x18\x03 \x01(\rR\bwarnDays\x12!\n" +
+	"\fverify_chain\x18\x04 \x01(\bR\vverifyChain\x12\x1f\n" +
+	"\vserver_name\x18\x05 \x01(\tR\n" +
+	"serverName\"5\n" +
 	"\tPingCheck\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\rR\x05count\"T\n" +

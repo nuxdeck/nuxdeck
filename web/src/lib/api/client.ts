@@ -10,6 +10,8 @@ export interface ApiError {
   message: string;
   hint: string;
   field?: string;
+  /** Seconds to wait before retrying, from a Retry-After header (429 responses). */
+  retryAfter?: number;
 }
 
 export class ApiRequestError extends Error {
@@ -170,6 +172,192 @@ export interface PressureReport {
   containers: Pressure[];
 }
 
+export type CheckType = 'http' | 'tcp' | 'dns' | 'tls' | 'ping';
+export type CheckState = 'up' | 'down' | 'unknown';
+
+/** A credential as the server returns it: whether one is stored, never the value. */
+export interface SecretState {
+  set: boolean;
+}
+
+/** What may be sent for a secret: a string sets it, "" clears it, absent or {set:true} keeps it. */
+export type SecretInput = string | SecretState | null | undefined;
+
+export interface CheckHeader {
+  name: string;
+  value?: string;
+  secret?: boolean;
+  secret_value?: SecretInput;
+}
+
+export interface CheckAuth {
+  type: 'none' | 'basic' | 'bearer';
+  username?: string;
+  password?: SecretInput;
+  token?: SecretInput;
+}
+
+export interface HttpSpec {
+  url: string;
+  method?: string;
+  headers?: CheckHeader[];
+  body?: string;
+  auth?: CheckAuth | null;
+  expected_status?: number[];
+  keyword?: string;
+  json?: { path: string; op: 'exists' | 'equals'; value?: string } | null;
+  verify_tls?: boolean;
+  max_redirects?: number;
+  max_body_bytes?: number;
+}
+
+export interface CheckStatus {
+  state: CheckState;
+  since: string | null;
+  last_checked: string | null;
+  last_latency_ms: number | null;
+  last_error_code: string;
+  last_detail: string;
+}
+
+/** The body of POST and PUT /checks; exactly the section for `type` is present. */
+export interface CheckInput {
+  name: string;
+  type: CheckType;
+  runner: string;
+  interval_s: number;
+  timeout_s: number;
+  retries: number;
+  enabled: boolean;
+  allow_private: boolean;
+  http?: HttpSpec;
+  tcp?: { host: string; port: number };
+  dns?: { name: string; record_type: string; resolver?: string; expected?: string[] };
+  tls?: {
+    host: string;
+    port?: number;
+    server_name?: string;
+    warn_days?: number;
+    verify_chain?: boolean;
+  };
+  ping?: { host: string; count?: number };
+}
+
+export interface Check extends Omit<CheckInput, 'http'> {
+  id: string;
+  http?: HttpSpec;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  status: CheckStatus;
+}
+
+export interface CheckResult {
+  ts: string;
+  status: string;
+  latency_ms: number;
+  error_code: string;
+  detail: string;
+}
+
+export interface CheckUptime {
+  '24h': number | null;
+  '7d': number | null;
+  '30d': number | null;
+  '90d': number | null;
+}
+
+/** A check together with the ETag it was read with. */
+export interface CheckWithEtag {
+  check: Check;
+  etag: string;
+}
+
+/** One named group of checks on a status page. */
+export interface StatusComponent {
+  id?: string;
+  name: string;
+  check_ids: string[];
+}
+
+/** The editable part of a status page. `slug` is fixed once the page exists. */
+export interface StatusPageInput {
+  slug: string;
+  title: string;
+  description: string;
+  published: boolean;
+  components: StatusComponent[];
+}
+
+export interface StatusPage extends StatusPageInput {
+  id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type IncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved';
+export type IncidentImpact = 'none' | 'minor' | 'major';
+
+export interface IncidentUpdate {
+  status: IncidentStatus;
+  body: string;
+  created_by: string;
+  at: string;
+}
+
+export interface Incident {
+  id: string;
+  page_id: string;
+  title: string;
+  body: string;
+  status: IncidentStatus;
+  impact: IncidentImpact;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  updates: IncidentUpdate[];
+}
+
+export interface IncidentInput {
+  title: string;
+  body: string;
+  status: IncidentStatus;
+  impact: IncidentImpact;
+}
+
+/** A status page with the ETag it was read with. */
+export interface StatusPageWithEtag {
+  page: StatusPage;
+  etag: string;
+}
+
+export type PublicLevel = 'operational' | 'degraded' | 'outage' | 'unknown';
+
+/** What GET /status/{slug}.json returns: the anonymous projection, nothing internal. */
+export interface PublicStatus {
+  title: string;
+  description: string;
+  status: PublicLevel;
+  generated_at: string;
+  components: {
+    name: string;
+    status: PublicLevel;
+    uptime_90d: number | null;
+    days: { date: string; status: PublicLevel }[];
+  }[];
+  incidents: {
+    title: string;
+    body: string;
+    status: IncidentStatus;
+    impact: IncidentImpact;
+    started_at: string;
+    resolved_at: string | null;
+    updates: { status: IncidentStatus; body: string; at: string }[];
+  }[];
+}
+
 export const MAX_LABEL_FILTERS = 4;
 
 /** The query string of GET /metrics/query; label filters are sorted so equal queries give equal URLs. */
@@ -189,6 +377,142 @@ export function metricsQueryString(q: MetricsQuery): string {
   return p.toString();
 }
 
+// ---- Alerting (ALR-*) ----
+
+export type RuleKind =
+  'check_down' | 'host_offline' | 'container_stopped' | 'metric_threshold' | 'tls_expiring';
+export type Severity = 'info' | 'warning' | 'critical';
+export type AlertState = 'open' | 'acked' | 'resolved';
+export type AlertItemType = 'host' | 'container' | 'check';
+
+export interface Selector {
+  tags: string[];
+  ids: string[];
+  severity: string[];
+  kinds: string[];
+}
+
+export interface RuleInput {
+  name: string;
+  kind: RuleKind;
+  severity: Severity;
+  enabled: boolean;
+  selector: { tags: string[]; ids: string[] };
+  params: Record<string, unknown>;
+}
+
+export interface Rule extends RuleInput {
+  id: string;
+  selector: Selector;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuleWithEtag {
+  rule: Rule;
+  etag: string;
+}
+
+export interface AlertItem {
+  id: string;
+  rule_id: string;
+  rule_name: string;
+  kind: RuleKind;
+  severity: Severity;
+  item_type: AlertItemType;
+  item_id: string;
+  item_name: string;
+  summary: string;
+  /** Absolute URL from the server; the UI derives its own in-app route instead. */
+  link: string;
+  state: AlertState;
+  opened_at: string;
+  acked_by: string;
+  acked_at: string | null;
+  resolved_at: string | null;
+  resolve_reason: string;
+  flap_count: number;
+  last_notified_at: string | null;
+}
+
+export type AlertStateFilter = AlertState | 'active';
+
+export interface AlertQuery {
+  state?: AlertStateFilter;
+  severity?: string;
+  item_id?: string;
+  rule_id?: string;
+  limit?: number;
+}
+
+export type SilenceKind = 'silence' | 'maintenance';
+
+export interface SilenceInput {
+  kind: SilenceKind;
+  selector: Partial<Selector>;
+  starts_at?: string;
+  ends_at: string;
+  reason: string;
+}
+
+export interface Silence {
+  id: string;
+  kind: SilenceKind;
+  selector: Selector;
+  starts_at: string;
+  ends_at: string;
+  reason: string;
+  created_by: string;
+  created_at: string;
+  state: 'scheduled' | 'active' | 'expired';
+}
+
+export type ChannelType = 'smtp' | 'slack' | 'teams' | 'discord' | 'telegram' | 'webhook';
+
+export interface ChannelInput {
+  name: string;
+  type: ChannelType;
+  enabled: boolean;
+  allow_private: boolean;
+  /** Secrets: a string sets, "" clears, omitted keeps; they read back as {"set": true}. */
+  config: Record<string, unknown>;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  type: ChannelType;
+  enabled: boolean;
+  allow_private: boolean;
+  config: Record<string, unknown>;
+  last_status: 'never' | 'ok' | 'failed';
+  last_error_code: string;
+  last_sent_at: string | null;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChannelWithEtag {
+  channel: Channel;
+  etag: string;
+}
+
+export interface RouteEntry {
+  id?: string;
+  selector: { tags: string[]; severity: string[]; kinds: string[] };
+  channel_id: string;
+  continue: boolean;
+}
+
+export interface RouteList {
+  routes: RouteEntry[];
+  etag: string;
+}
+
 const NETWORK_ERROR: Omit<ApiError, 'status'> = {
   code: 'NETWORK',
   message: 'Could not reach the server.',
@@ -198,11 +522,12 @@ const NETWORK_ERROR: Omit<ApiError, 'status'> = {
 let csrfToken = '';
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {},
   signal?: AbortSignal,
+  meta?: { etag?: string },
 ): Promise<T> {
   const headers: Record<string, string> = { ...extraHeaders };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -221,6 +546,7 @@ async function request<T>(
     throw new ApiRequestError({ status: 0, ...NETWORK_ERROR });
   }
 
+  if (meta) meta.etag = response.headers.get('ETag') ?? undefined;
   if (response.status === 204) return undefined as T;
   let payload: unknown;
   try {
@@ -236,9 +562,15 @@ async function request<T>(
       message: e?.message ?? 'Something went wrong on the server.',
       hint: e?.hint ?? 'Try again.',
       field: e?.field,
+      retryAfter: parseRetryAfter(response.headers.get('Retry-After')),
     });
   }
   return payload as T;
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  const n = value === null ? NaN : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 function remember(s: Session): Session {
@@ -338,6 +670,237 @@ export const api = {
   pressure: (signal?: AbortSignal) =>
     request<PressureReport>('GET', '/overview/pressure', undefined, {}, signal),
   createEnrollmentToken: () => request<EnrollmentToken>('POST', '/agents/tokens', {}),
+  checks: () => all<Check>('/checks'),
+  check: async (id: string): Promise<CheckWithEtag> => {
+    const meta: { etag?: string } = {};
+    const check = await request<Check>(
+      'GET',
+      `/checks/${encodeURIComponent(id)}`,
+      undefined,
+      {},
+      undefined,
+      meta,
+    );
+    return { check, etag: meta.etag ?? '' };
+  },
+  createCheck: async (input: CheckInput): Promise<CheckWithEtag> => {
+    const meta: { etag?: string } = {};
+    const check = await request<Check>('POST', '/checks', input, {}, undefined, meta);
+    return { check, etag: meta.etag ?? '' };
+  },
+  /** `etag` is required: the server refuses a replace it cannot tie to the version the editor loaded. */
+  updateCheck: async (id: string, input: CheckInput, etag: string): Promise<CheckWithEtag> => {
+    const meta: { etag?: string } = {};
+    const check = await request<Check>(
+      'PUT',
+      `/checks/${encodeURIComponent(id)}`,
+      input,
+      { 'If-Match': etag },
+      undefined,
+      meta,
+    );
+    return { check, etag: meta.etag ?? '' };
+  },
+  deleteCheck: (id: string) => request<void>('DELETE', `/checks/${encodeURIComponent(id)}`),
+  runCheck: (id: string) =>
+    request<CheckResult>('POST', `/checks/${encodeURIComponent(id)}/run`, {}),
+  checkResults: (id: string, limit = 500, cursor?: string | null, signal?: AbortSignal) =>
+    request<Page<CheckResult>>(
+      'GET',
+      `/checks/${encodeURIComponent(id)}/results?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      undefined,
+      {},
+      signal,
+    ),
+  checkUptime: (id: string, signal?: AbortSignal) =>
+    request<CheckUptime>('GET', `/checks/${encodeURIComponent(id)}/uptime`, undefined, {}, signal),
+  statusPages: () => request<{ items: StatusPage[] }>('GET', '/status-pages').then((r) => r.items),
+  statusPage: async (id: string): Promise<StatusPageWithEtag> => {
+    const meta: { etag?: string } = {};
+    const page = await request<StatusPage>(
+      'GET',
+      `/status-pages/${encodeURIComponent(id)}`,
+      undefined,
+      {},
+      undefined,
+      meta,
+    );
+    return { page, etag: meta.etag ?? '' };
+  },
+  createStatusPage: async (input: StatusPageInput): Promise<StatusPageWithEtag> => {
+    const meta: { etag?: string } = {};
+    const page = await request<StatusPage>('POST', '/status-pages', input, {}, undefined, meta);
+    return { page, etag: meta.etag ?? '' };
+  },
+  /** `etag` is required: the server refuses a replace it cannot tie to the version the editor loaded. */
+  updateStatusPage: async (
+    id: string,
+    input: StatusPageInput,
+    etag: string,
+  ): Promise<StatusPageWithEtag> => {
+    const meta: { etag?: string } = {};
+    const page = await request<StatusPage>(
+      'PUT',
+      `/status-pages/${encodeURIComponent(id)}`,
+      input,
+      { 'If-Match': etag },
+      undefined,
+      meta,
+    );
+    return { page, etag: meta.etag ?? '' };
+  },
+  deleteStatusPage: (id: string) =>
+    request<void>('DELETE', `/status-pages/${encodeURIComponent(id)}`),
+  incidents: (pageId: string) =>
+    request<{ items: Incident[] }>(
+      'GET',
+      `/status-pages/${encodeURIComponent(pageId)}/incidents`,
+    ).then((r) => r.items),
+  createIncident: (pageId: string, input: IncidentInput) =>
+    request<Incident>('POST', `/status-pages/${encodeURIComponent(pageId)}/incidents`, input),
+  addIncidentUpdate: (
+    pageId: string,
+    incidentId: string,
+    update: { status: IncidentStatus; body: string; impact?: IncidentImpact },
+  ) =>
+    request<Incident>(
+      'POST',
+      `/status-pages/${encodeURIComponent(pageId)}/incidents/${encodeURIComponent(incidentId)}/updates`,
+      update,
+    ),
+  resolveIncident: (pageId: string, incidentId: string, body: string) =>
+    request<Incident>(
+      'POST',
+      `/status-pages/${encodeURIComponent(pageId)}/incidents/${encodeURIComponent(incidentId)}/resolve`,
+      { body },
+    ),
+  deleteIncident: (pageId: string, incidentId: string) =>
+    request<void>(
+      'DELETE',
+      `/status-pages/${encodeURIComponent(pageId)}/incidents/${encodeURIComponent(incidentId)}`,
+    ),
+  /** The public projection, read from the anonymous endpoint exactly as a visitor's browser would. */
+  publicStatus: async (slug: string, signal?: AbortSignal): Promise<PublicStatus | null> => {
+    let response: Response;
+    try {
+      response = await fetch(`/status/${encodeURIComponent(slug)}.json`, {
+        credentials: 'omit',
+        signal,
+      });
+    } catch {
+      throw new ApiRequestError({ status: 0, ...NETWORK_ERROR });
+    }
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      throw new ApiRequestError({
+        status: response.status,
+        code: 'API-INT-001',
+        message: 'The public page could not be read.',
+        hint: 'Try again.',
+      });
+    }
+    return (await response.json()) as PublicStatus;
+  },
+  rules: () => all<Rule>('/rules'),
+  rule: async (id: string): Promise<RuleWithEtag> => {
+    const meta: { etag?: string } = {};
+    const rule = await request<Rule>(
+      'GET',
+      `/rules/${encodeURIComponent(id)}`,
+      undefined,
+      {},
+      undefined,
+      meta,
+    );
+    return { rule, etag: meta.etag ?? '' };
+  },
+  createRule: (input: RuleInput) => request<Rule>('POST', '/rules', input),
+  updateRule: async (id: string, input: RuleInput, etag: string): Promise<RuleWithEtag> => {
+    const meta: { etag?: string } = {};
+    const rule = await request<Rule>(
+      'PUT',
+      `/rules/${encodeURIComponent(id)}`,
+      input,
+      { 'If-Match': etag },
+      undefined,
+      meta,
+    );
+    return { rule, etag: meta.etag ?? '' };
+  },
+  deleteRule: (id: string) => request<void>('DELETE', `/rules/${encodeURIComponent(id)}`),
+  alerts: (q: AlertQuery = {}, signal?: AbortSignal) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') p.set(k, String(v));
+    p.set('limit', String(q.limit ?? 200));
+    return request<Page<AlertItem>>('GET', `/alerts?${p.toString()}`, undefined, {}, signal).then(
+      (r) => r.items,
+    );
+  },
+  alert: (id: string) => request<AlertItem>('GET', `/alerts/${encodeURIComponent(id)}`),
+  ackAlert: (id: string) => request<AlertItem>('POST', `/alerts/${encodeURIComponent(id)}/ack`, {}),
+  silences: (activeOnly = false) =>
+    request<Page<Silence>>('GET', `/silences?limit=200${activeOnly ? '&active=true' : ''}`).then(
+      (r) => r.items,
+    ),
+  createSilence: (input: SilenceInput) => request<Silence>('POST', '/silences', input),
+  deleteSilence: (id: string) => request<void>('DELETE', `/silences/${encodeURIComponent(id)}`),
+  channels: () => all<Channel>('/channels'),
+  channel: async (id: string): Promise<ChannelWithEtag> => {
+    const meta: { etag?: string } = {};
+    const channel = await request<Channel>(
+      'GET',
+      `/channels/${encodeURIComponent(id)}`,
+      undefined,
+      {},
+      undefined,
+      meta,
+    );
+    return { channel, etag: meta.etag ?? '' };
+  },
+  createChannel: (input: ChannelInput) => request<Channel>('POST', '/channels', input),
+  updateChannel: async (
+    id: string,
+    input: ChannelInput,
+    etag: string,
+  ): Promise<ChannelWithEtag> => {
+    const meta: { etag?: string } = {};
+    const channel = await request<Channel>(
+      'PUT',
+      `/channels/${encodeURIComponent(id)}`,
+      input,
+      { 'If-Match': etag },
+      undefined,
+      meta,
+    );
+    return { channel, etag: meta.etag ?? '' };
+  },
+  deleteChannel: (id: string) => request<void>('DELETE', `/channels/${encodeURIComponent(id)}`),
+  testChannel: (id: string) =>
+    request<{ ok: boolean }>('POST', `/channels/${encodeURIComponent(id)}/test`, {}),
+  routes: async (): Promise<RouteList> => {
+    const meta: { etag?: string } = {};
+    const doc = await request<{ routes: RouteEntry[] }>(
+      'GET',
+      '/routes',
+      undefined,
+      {},
+      undefined,
+      meta,
+    );
+    return { routes: doc.routes ?? [], etag: meta.etag ?? '' };
+  },
+  replaceRoutes: async (routes: RouteEntry[], etag: string): Promise<RouteList> => {
+    const meta: { etag?: string } = {};
+    const doc = await request<{ routes: RouteEntry[] }>(
+      'PUT',
+      '/routes',
+      { routes },
+      { 'If-Match': etag },
+      undefined,
+      meta,
+    );
+    return { routes: doc.routes ?? [], etag: meta.etag ?? '' };
+  },
   openEvents,
   logout: async () => {
     await request<void>('POST', '/auth/logout');

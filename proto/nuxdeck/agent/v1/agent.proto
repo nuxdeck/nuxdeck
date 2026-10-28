@@ -251,6 +251,8 @@ message CheckResult {
   uint32 latency_ms = 5;
   // Stable code such as CHK-HTTP-001 when status is DOWN.
   string error_code = 6;
+  // Short fixed-vocabulary note such as "status 503" or "days_remaining=9"; never target content.
+  string detail = 7;
 }
 
 message RenewRequest {
@@ -334,6 +336,15 @@ message HttpCheck {
   // Empty means any 2xx.
   repeated uint32 expected_status = 4;
   bool verify_tls = 5;
+  bytes body = 6;
+  // Substring the response body must contain; empty disables the check.
+  string keyword = 7;
+  // Dotted path such as a.b[0].c, with json_op "exists" or "equals" (json_value is the expected scalar).
+  string json_path = 8;
+  string json_op = 9;
+  string json_value = 10;
+  uint32 max_redirects = 11;
+  uint32 max_body_bytes = 12;
 }
 
 message TcpCheck {
@@ -347,6 +358,8 @@ message DnsCheck {
   string record_type = 2;
   // Optional resolver, host:port; empty uses the host's resolver.
   string resolver = 3;
+  // Every value listed must be among the answers; empty only requires an answer.
+  repeated string expected = 4;
 }
 
 message TlsCheck {
@@ -354,6 +367,9 @@ message TlsCheck {
   uint32 port = 2;
   // Report DOWN when the certificate expires within this many days.
   uint32 warn_days = 3;
+  bool verify_chain = 4;
+  // SNI and name to verify; empty uses host.
+  string server_name = 5;
 }
 
 message PingCheck {

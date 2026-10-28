@@ -455,6 +455,42 @@ func TestRetention(t *testing.T) {
 	}
 }
 
+// TestRetentionDownsampled checks the 5-minute database against DownsampledRetention (MET-5).
+// The TSDB deletes whole 2-hour blocks, measured from the newest block rather than the wall
+// clock, so the oldest sample may be up to one block plus the head's span older than the
+// retention, but samples inside the retention must never be dropped.
+func TestRetentionDownsampled(t *testing.T) {
+	const downRetention = 48 * time.Hour
+	clk := &clock{t: time.UnixMilli(1_900_000_000_000)}
+	svc, err := metrics.Open(metrics.Options{
+		Dir: t.TempDir(), Log: slog.New(slog.NewTextHandler(&safeBuf{}, nil)), Inventory: testIndex(), Now: clk.now,
+		FullRetention: 24 * time.Hour, DownsampledRetention: downRetention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Close() }()
+	lbl := labels.FromStrings(nameLabel, "nux_host_load_average", "target_type", "host", "target", hostA, "window", "1m")
+	seedFrom := clk.now().Add(-6 * 24 * time.Hour)
+	if n, err := metrics.WriteDownForTest(svc, []labels.Labels{lbl}, seedFrom, clk.now(), 5*time.Minute); err != nil || n == 0 {
+		t.Fatalf("seed: %d %v", n, err)
+	}
+	if oldest := metrics.OldestDownForTest(svc); oldest != seedFrom.UnixMilli() {
+		t.Fatalf("seeded oldest = %d, want %d", oldest, seedFrom.UnixMilli())
+	}
+
+	if err := svc.Maintain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	age := time.Duration(clk.now().UnixMilli()-metrics.OldestDownForTest(svc)) * time.Millisecond
+	if age > downRetention+6*time.Hour {
+		t.Errorf("oldest 5-minute sample is %v old, retention is %v: old data was not dropped", age, downRetention)
+	}
+	if age < downRetention {
+		t.Errorf("oldest 5-minute sample is %v old, but data inside the %v retention must be kept", age, downRetention)
+	}
+}
+
 func TestPerformance24hOneHostFiftyContainers(t *testing.T) { // MET-6: under 1 second
 	if testing.Short() {
 		t.Skip("seeds 24h of data")

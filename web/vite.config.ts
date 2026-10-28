@@ -29,7 +29,7 @@ export default defineConfig({
     modulePreload: { polyfill: false },
   },
   server: {
-    proxy: { '/api': nuxd, '/healthz': nuxd, '/readyz': nuxd },
+    proxy: { '/api': nuxd, '/healthz': nuxd, '/readyz': nuxd, '/status': nuxd },
   },
   test: {
     environment: 'jsdom',

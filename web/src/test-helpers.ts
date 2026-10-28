@@ -12,6 +12,8 @@ export interface Call {
 export interface Reply {
   status: number;
   body?: unknown;
+  /** Extra response headers, such as ETag or Retry-After. */
+  headers?: Record<string, string>;
 }
 
 export type Handler = (call: Call) => Reply | Promise<Reply>;
@@ -51,7 +53,7 @@ export function fakeServer(routes: Record<string, Handler | Reply>) {
       if (reply.status === 204) return new Response(null, { status: 204 });
       return new Response(JSON.stringify(reply.body ?? {}), {
         status: reply.status,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...reply.headers },
       });
     }),
   );

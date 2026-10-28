@@ -9,7 +9,10 @@
   import TopBar from '../ui/TopBar.svelte';
   import AddHost from '../../routes/AddHost.svelte';
   import AuditLog from '../../routes/AuditLog.svelte';
+  import AlertPage from '../../routes/AlertPage.svelte';
   import Alerts from '../../routes/Alerts.svelte';
+  import CheckEditor from '../../routes/CheckEditor.svelte';
+  import CheckPage from '../../routes/CheckPage.svelte';
   import Checks from '../../routes/Checks.svelte';
   import ContainerPage from '../../routes/ContainerPage.svelte';
   import HostPage from '../../routes/HostPage.svelte';
@@ -51,13 +54,23 @@
   const baseTitle = $derived(
     route.kind === 'section'
       ? findSection(route.path)?.title
-      : route.kind === 'add-host'
-        ? 'Add a host'
-        : route.kind === 'host'
-          ? 'Host'
-          : route.kind === 'container'
-            ? 'Container'
-            : 'Page not found',
+      : route.kind === 'alerts'
+        ? 'Alerts'
+        : route.kind === 'alert'
+          ? 'Alert'
+          : route.kind === 'add-host'
+            ? 'Add a host'
+            : route.kind === 'host'
+              ? 'Host'
+              : route.kind === 'container'
+                ? 'Container'
+                : route.kind === 'check-new'
+                  ? 'Add check'
+                  : route.kind === 'check'
+                    ? 'Check'
+                    : route.kind === 'check-edit'
+                      ? 'Edit check'
+                      : 'Page not found',
   );
 
   // The live inventory belongs to the signed-in shell: it loads once and every page reads it.
@@ -112,12 +125,22 @@
   <div class="body">
     <Sidebar id={SIDEBAR_ID} {collapsed} />
     <main id="main" tabindex="-1">
-      {#if route.kind === 'add-host'}
+      {#if route.kind === 'alerts'}
+        {#key route.view}<Alerts view={route.view} />{/key}
+      {:else if route.kind === 'alert'}
+        {#key route.id}<AlertPage id={route.id} />{/key}
+      {:else if route.kind === 'add-host'}
         <AddHost />
       {:else if route.kind === 'host'}
         {#key route.id}<HostPage id={route.id} />{/key}
       {:else if route.kind === 'container'}
         {#key route.id}<ContainerPage id={route.id} />{/key}
+      {:else if route.kind === 'check-new'}
+        <CheckEditor />
+      {:else if route.kind === 'check'}
+        {#key route.id}<CheckPage id={route.id} />{/key}
+      {:else if route.kind === 'check-edit'}
+        {#key route.id}<CheckEditor id={route.id} />{/key}
       {:else}
         <Page />
       {/if}

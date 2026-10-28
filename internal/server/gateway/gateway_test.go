@@ -14,6 +14,7 @@ import (
 	"net"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,8 @@ type env struct {
 	inv      *inventory.Service
 	stopGW   context.CancelFunc
 	gwStoped chan struct{}
+	// hook, when set, also receives every agent message (id from the certificate).
+	hook atomic.Pointer[func(string, *agentv1.AgentMessage)]
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
@@ -93,6 +96,9 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 		},
 		OnMessage: func(id string, m *agentv1.AgentMessage) {
 			e.inv.HandleMessage(id, m)
+			if h := e.hook.Load(); h != nil {
+				(*h)(id, m)
+			}
 			select {
 			case e.msgs <- m:
 			default:

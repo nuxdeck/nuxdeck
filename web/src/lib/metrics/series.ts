@@ -3,7 +3,8 @@
 import type { MetricSeries, MetricsResult } from '../api/client';
 import { formatBytes } from '../format';
 
-export type Unit = 'percent' | 'bytes' | 'bytesPerSecond' | 'perSecond' | 'cores' | 'number';
+export type Unit =
+  'percent' | 'bytes' | 'bytesPerSecond' | 'perSecond' | 'cores' | 'milliseconds' | 'number';
 
 /** One line on a chart: points are [unix_ms, value], ascending in time. */
 export interface ChartSeries {
@@ -98,6 +99,8 @@ export function formatValue(unit: Unit, v: number | null | undefined): string {
       return `${formatBytes(v)}/s`;
     case 'perSecond':
       return `${compact(v)}/s`;
+    case 'milliseconds':
+      return `${Math.round(v)} ms`;
     case 'cores':
       return `${v.toFixed(2)} ${v === 1 ? 'core' : 'cores'}`;
     default:

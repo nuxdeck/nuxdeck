@@ -22,6 +22,9 @@
     exited: { tone: 'unknown', icon: 'circle', label: 'Exited' },
     created: { tone: 'unknown', icon: 'circle', label: 'Created' },
     gone: { tone: 'unknown', icon: 'circle', label: 'Gone' },
+    up: { tone: 'healthy', icon: 'checkCircle', label: 'Up' },
+    down: { tone: 'critical', icon: 'xCircle', label: 'Down' },
+    unknown: { tone: 'unknown', icon: 'circle', label: 'Unknown' },
   };
 
   const shown = $derived(

@@ -59,6 +59,13 @@ func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error)
 	return nil
 }
 
+// DB exposes the connection pool to modules that own their tables, such as store/secrets.
+// Write through InTx so the change shares a transaction with its audit entry.
+func (s *Store) DB() *sql.DB { return s.db }
+
+// InTx runs fn in a write transaction that is rolled back if fn fails.
+func (s *Store) InTx(ctx context.Context, fn func(tx *sql.Tx) error) error { return s.inTx(ctx, fn) }
+
 // Open creates the data directory if needed, opens nux.db in WAL mode and
 // applies pending migrations.
 func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error) {

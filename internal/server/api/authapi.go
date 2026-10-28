@@ -189,12 +189,17 @@ func clearSessionCookie(w http.ResponseWriter) {
 // decode reads one strict JSON object: right content type, bounded size, no
 // unknown fields, nothing after the value.
 func (a *authAPI) decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return a.decodeMax(w, r, dst, maxBodyBytes)
+}
+
+// decodeMax is decode with a larger body limit, for the few documents that need it.
+func (a *authAPI) decodeMax(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mt != "application/json" {
 		writeErrorDetail(w, http.StatusUnsupportedMediaType, errcode.APIVal001, "", "Send Content-Type: application/json.")
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	err = dec.Decode(dst)
 	if err == nil {

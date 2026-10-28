@@ -68,6 +68,15 @@ type Logs interface {
 	Out() <-chan *agentv1.AgentMessage
 }
 
+// Checks runs uptime checks on the server's request; *checks.Manager implements it.
+type Checks interface {
+	Run(ctx context.Context, rc *agentv1.RunCheck)
+	// CloseAll waits for running checks; it is called when the connection ends.
+	CloseAll()
+	// Out yields CheckResult messages.
+	Out() <-chan *agentv1.AgentMessage
+}
+
 // Config is what the loop needs.
 type Config struct {
 	StateDir string
@@ -85,6 +94,8 @@ type Config struct {
 	Metrics Metrics
 	// Logs, when set, answers OpenLogStream and CloseLogStream requests.
 	Logs Logs
+	// Checks, when set, answers RunCheck requests.
+	Checks Checks
 	// RenewAt overrides when to renew (default: two thirds into the certificate's life); tests use it.
 	RenewAt func(*identity.Identity) time.Time
 }
@@ -252,6 +263,12 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 		defer c.Logs.CloseAll()
 	}
 
+	var checkOut <-chan *agentv1.AgentMessage // nil without checks: that case never fires
+	if c.Checks != nil {
+		checkOut = c.Checks.Out()
+		defer c.Checks.CloseAll()
+	}
+
 	beat := time.NewTicker(interval)
 	defer beat.Stop()
 	renewTimer := time.NewTimer(time.Until(c.renewAt(id)))
@@ -307,8 +324,14 @@ func session(ctx context.Context, c Config, id *identity.Identity) error {
 				if c.Logs != nil {
 					c.Logs.Close(body.CloseLog.GetStreamId())
 				}
-			default:
-				// Check requests arrive with their module (NUX-27).
+			case *agentv1.ServerMessage_RunCheck:
+				if c.Checks != nil {
+					c.Checks.Run(ctx, body.RunCheck)
+				}
+			}
+		case m := <-checkOut:
+			if err := stream.Send(m); err != nil {
+				return classifyStreamError(err)
 			}
 		case m := <-logOut:
 			if err := stream.Send(m); err != nil {

@@ -14,12 +14,15 @@ import (
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
+	"github.com/nuxdeck/nuxdeck/internal/server/alerting"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/checks"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
 	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/logs"
 	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
+	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 )
 
 // Readiness reports whether a dependency is usable.
@@ -56,6 +59,13 @@ type Options struct {
 	LogScope LogScope
 	// Metrics serves chart queries and the overview ranking; it needs Auth and Inventory.
 	Metrics *metrics.Service
+	// Checks serves the uptime-check endpoints; it needs Auth.
+	Checks *checks.Service
+	// Alerting and Channels serve rules, alerts, silences, channels and routes; both are needed, with Auth.
+	Alerting *alerting.Service
+	Channels *alerting.Channels
+	// StatusPages serves the public status pages; with Auth it also enables their admin API.
+	StatusPages *statuspages.Service
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -86,9 +96,22 @@ func Handler(o Options) http.Handler {
 		if o.Inventory != nil && o.Logs != nil && o.Audit != nil { // without an audit sink there is no stream
 			(&logsAPI{authAPI: a, inv: o.Inventory, broker: o.Logs, audit: o.Audit, scope: o.LogScope}).register(mux)
 		}
+		if o.Checks != nil {
+			(&checksAPI{authAPI: a, checks: o.Checks}).register(mux)
+		}
+		if o.StatusPages != nil {
+			(&statusPagesAPI{authAPI: a, pages: o.StatusPages}).register(mux)
+		}
+		if o.Alerting != nil && o.Channels != nil {
+			(&alertsAPI{authAPI: a, alerts: o.Alerting, channels: o.Channels}).register(mux)
+		}
 		if o.PKI != nil {
 			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL, revoker: o.Revoker}).register(mux)
 		}
+	}
+
+	if o.StatusPages != nil {
+		o.StatusPages.RegisterPublic(mux) // anonymous; sets its own stricter CSP over securityHeaders
 	}
 
 	var ui http.Handler

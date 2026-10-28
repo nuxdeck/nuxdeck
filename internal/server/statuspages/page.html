@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/status/assets/status.css">
+</head>
+<body>
+<main>
+<header>
+<h1>{{.Title}}</h1>
+{{- if .Description}}
+<p class="desc">{{range $i, $l := .DescriptionLines}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>
+{{- end}}
+<p class="overall {{.StatusClass}}">{{.StatusText}}</p>
+</header>
+{{- if .Incidents}}
+<section aria-labelledby="incidents">
+<h2 id="incidents">Incidents</h2>
+<ul class="list">
+{{- range .Incidents}}
+<li class="card">
+<div class="row"><h3>{{.Title}}</h3><span class="badge {{.StatusClass}}">{{.StatusText}}</span></div>
+<p class="meta">Started <time datetime="{{.StartedISO}}">{{.Started}}</time>{{if .Resolved}} · Resolved <time datetime="{{.ResolvedISO}}">{{.Resolved}}</time>{{end}}</p>
+<p class="body">{{range $i, $l := .Lines}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>
+{{- if .Updates}}
+<ul class="timeline">
+{{- range .Updates}}
+<li><p class="meta"><strong>{{.StatusText}}</strong> · <time datetime="{{.AtISO}}">{{.At}}</time></p>{{if .Lines}}<p class="body">{{range $i, $l := .Lines}}{{if $i}}<br>{{end}}{{$l}}{{end}}</p>{{end}}</li>
+{{- end}}
+</ul>
+{{- end}}
+</li>
+{{- end}}
+</ul>
+</section>
+{{- end}}
+<section aria-labelledby="components">
+<h2 id="components">Components</h2>
+{{- if .Components}}
+<ul class="list">
+{{- range .Components}}
+<li class="card">
+<div class="row"><h3>{{.Name}}</h3><span class="badge {{.StatusClass}}">{{.StatusText}}</span></div>
+<div class="bars" role="img" aria-label="{{.Name}}: {{.Summary}}">
+{{- range .Days}}<span class="day {{.Class}}" title="{{.Title}}"></span>{{end -}}
+</div>
+<p class="uptime">{{.Summary}}</p>
+</li>
+{{- end}}
+</ul>
+{{- else}}
+<p class="meta">No components yet.</p>
+{{- end}}
+</section>
+<footer><p>Updated <time datetime="{{.GeneratedISO}}">{{.Generated}}</time>. Each bar is one UTC day, oldest on the left.</p></footer>
+</main>
+</body>
+</html>
