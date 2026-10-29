@@ -3,6 +3,8 @@
 #
 # Tests install.sh against a fake release served from loopback, with a fake
 # cosign that records how it was called. No network, root or systemd needed.
+# The check helper eval's single-quoted expressions on purpose, so they expand inside the helper.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
