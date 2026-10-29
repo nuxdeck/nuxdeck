@@ -230,9 +230,10 @@
           {:else}
             <tr
               ><td colspan="7"
-                >{inventory.containers.length === 0
-                  ? 'No containers reported yet.'
-                  : 'No container matches the filter.'}</td
+                >{#if inventory.containers.length === 0}No containers reported yet. Containers
+                  appear once an agent reports a Docker or Podman host. <a href="/inventory/add"
+                    >Add a host</a
+                  >.{:else}No container matches the filter.{/if}</td
               ></tr
             >
           {/each}

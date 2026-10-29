@@ -7,8 +7,11 @@
   import CommandPalette from '../ui/CommandPalette.svelte';
   import Sidebar from '../ui/Sidebar.svelte';
   import TopBar from '../ui/TopBar.svelte';
+  import Account from '../../routes/Account.svelte';
+  import RoleBindings from '../../routes/RoleBindings.svelte';
+  import Users from '../../routes/Users.svelte';
   import AddHost from '../../routes/AddHost.svelte';
-  import AuditLog from '../../routes/AuditLog.svelte';
+  import Audit from '../../routes/Audit.svelte';
   import AlertPage from '../../routes/AlertPage.svelte';
   import Alerts from '../../routes/Alerts.svelte';
   import CheckEditor from '../../routes/CheckEditor.svelte';
@@ -20,6 +23,8 @@
   import NotFound from '../../routes/NotFound.svelte';
   import Overview from '../../routes/Overview.svelte';
   import Settings from '../../routes/Settings.svelte';
+  import SetupWizard from '../../routes/SetupWizard.svelte';
+  import SetupBanner from '../onboarding/SetupBanner.svelte';
   import StatusPages from '../../routes/StatusPages.svelte';
 
   const pages: Record<string, Component> = {
@@ -29,7 +34,7 @@
     '/alerts': Alerts,
     '/status-pages': StatusPages,
     '/settings': Settings,
-    '/audit': AuditLog,
+    '/audit': Audit,
   };
 
   const SIDEBAR_ID = 'main-nav';
@@ -70,7 +75,13 @@
                     ? 'Check'
                     : route.kind === 'check-edit'
                       ? 'Edit check'
-                      : 'Page not found',
+                      : route.kind === 'account'
+                        ? 'Account'
+                        : route.kind === 'users'
+                          ? 'Users'
+                          : route.kind === 'setup'
+                            ? 'Set up'
+                            : 'Page not found',
   );
 
   // The live inventory belongs to the signed-in shell: it loads once and every page reads it.
@@ -125,6 +136,7 @@
   <div class="body">
     <Sidebar id={SIDEBAR_ID} {collapsed} />
     <main id="main" tabindex="-1">
+      {#if route.kind !== 'setup'}<SetupBanner />{/if}
       {#if route.kind === 'alerts'}
         {#key route.view}<Alerts view={route.view} />{/key}
       {:else if route.kind === 'alert'}
@@ -141,6 +153,13 @@
         {#key route.id}<CheckPage id={route.id} />{/key}
       {:else if route.kind === 'check-edit'}
         {#key route.id}<CheckEditor id={route.id} />{/key}
+      {:else if route.kind === 'account'}
+        <Account />
+      {:else if route.kind === 'users'}
+        <Users />
+        <RoleBindings />
+      {:else if route.kind === 'setup'}
+        <SetupWizard />
       {:else}
         <Page />
       {/if}

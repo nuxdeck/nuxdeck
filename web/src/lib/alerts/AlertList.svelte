@@ -125,6 +125,11 @@
     <EmptyState title={stateFilter === 'resolved' ? 'No resolved alerts' : 'No active alerts'}>
       {#if stateFilter === 'resolved'}Alerts that clear appear here for 90 days.{:else}Nothing is
         firing. Alerts open when a rule's condition holds.{/if}
+      {#snippet action()}
+        {#if stateFilter !== 'resolved' && canOperate()}
+          <a class="button-link" href="/alerts/rules">Set up a rule</a>
+        {/if}
+      {/snippet}
     </EmptyState>
   {:else}
     <div class="table-wrap">

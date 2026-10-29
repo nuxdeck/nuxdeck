@@ -42,7 +42,9 @@
     <kbd>Ctrl K</kbd>
   </button>
   {#if auth.user}
-    <span class="user">{auth.user.name}</span>
+    {#if auth.user.roles.includes('admin')}<a class="text-button" href="/settings/users">Users</a
+      >{/if}
+    <a class="user" href="/account">{auth.user.name}</a>
     <button type="button" class="text-button" onclick={() => void auth.logout()}>Sign out</button>
   {/if}
   <button
@@ -91,6 +93,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 16ch;
+    text-decoration: none;
   }
 
   .text-button {
@@ -100,6 +103,13 @@
     border-radius: var(--radius-1);
     background: var(--color-surface);
     cursor: pointer;
+  }
+
+  a.text-button {
+    display: inline-flex;
+    align-items: center;
+    color: var(--color-text);
+    text-decoration: none;
   }
 
   .text-button:hover {

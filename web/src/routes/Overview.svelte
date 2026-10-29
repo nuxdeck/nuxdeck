@@ -5,6 +5,7 @@
   import { inventory } from '../lib/inventory.svelte';
   import { formatPercent, levelOf, rankPressure } from '../lib/metrics/pressure';
   import { findSection } from '../lib/router.svelte';
+  import Checklist from '../lib/onboarding/Checklist.svelte';
   import EmptyState from '../lib/ui/EmptyState.svelte';
 
   const section = findSection('/');
@@ -59,6 +60,8 @@
 
 <h1 id="page-title" tabindex="-1">{section?.title}</h1>
 <p class="question">{section?.question}</p>
+
+<Checklist />
 
 {#if loading && !report}
   <p role="status">Loading…</p>

@@ -98,7 +98,10 @@
 {:else if items.length === 0}
   <EmptyState title="No checks yet">
     Uptime checks watch an HTTP endpoint, a TCP port, a DNS record, a certificate or a host.
-    {#if canWrite}<a href="/checks/new">Add your first check</a>.{:else}An operator can add one.{/if}
+    {#if !canWrite}An operator can add one.{/if}
+    {#snippet action()}
+      {#if canWrite}<a class="button-link" href="/checks/new">Add your first check</a>{/if}
+    {/snippet}
   </EmptyState>
 {:else}
   <div class="toolbar">

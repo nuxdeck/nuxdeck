@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -25,6 +25,14 @@ function blockAfter(selector: string): string {
     if (css[i] === '}' && --depth === 0) return css.slice(open + 1, i);
   }
   throw new Error(`unterminated block: ${selector}`);
+}
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.(svelte|css)$/.test(entry.name) ? [path] : [];
+  });
 }
 
 const light = declarations(blockAfter(':root {'));
@@ -56,6 +64,8 @@ const textPairs: [string, string][] = [
   ['--color-accent', '--color-surface'],
   ['--color-accent', '--color-bg'],
   ['--color-accent-text', '--color-accent'],
+  ['--color-text', '--color-surface-sunken'],
+  ['--color-accent', '--color-surface-sunken'],
   ...['healthy', 'warning', 'critical', 'unknown', 'paused'].map(
     (s) => [`--color-status-${s}`, `--color-status-${s}-bg`] as [string, string],
   ),
@@ -96,6 +106,34 @@ describe('design tokens', () => {
         contrast(theme[`--color-chart-${i}`] as string, theme['--color-surface'] as string),
         `--color-chart-${i}`,
       ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each([
+    ['light', light],
+    ['dark', darkByChoice],
+  ])(
+    'keeps form control borders at 3:1 against the page in the %s theme (1.4.11)',
+    (_name, theme) => {
+      for (const bg of ['--color-bg', '--color-surface']) {
+        expect(
+          contrast(theme['--color-border-strong'] as string, theme[bg] as string),
+          `--color-border-strong on ${bg}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    },
+  );
+
+  it('keeps the reduced-motion override and routes every transition through tokens', () => {
+    expect(light['--motion-fast']).toBe('150ms ease-out');
+    expect(css).toMatch(/prefers-reduced-motion: reduce\)\s*{\s*:root\s*{\s*--motion-fast:\s*0ms;/);
+    for (const file of sourceFiles(join(process.cwd(), 'src'))) {
+      const source = readFileSync(file, 'utf8');
+      for (const [, value] of source.matchAll(
+        /\b(?:transition|animation)(?:-duration)?:\s*([^;}]+)/g,
+      )) {
+        expect(value, file).toMatch(/var\(--motion-fast\)|^none$|^0|^opacity 0s/);
+      }
     }
   });
 

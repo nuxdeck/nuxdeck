@@ -207,9 +207,10 @@
     font-weight: 600;
   }
 
+  /* 24 px is the WCAG 2.2 minimum target (2.5.8); the default checkbox is 13 px. */
   input[type='checkbox'] {
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1.5rem;
+    height: 1.5rem;
   }
 
   .name {

@@ -32,11 +32,76 @@ export interface Session {
   csrf_token: string;
 }
 
+export interface PendingLogin {
+  ticket: string;
+  expires_at: string;
+  /** The server requires two-factor and this account has none yet. */
+  enrol_required: boolean;
+}
+
+/** A password-only sign-in yields a session; with two-factor it yields a pending step. */
+export type LoginResult = Session | { pending: PendingLogin };
+
+export interface TotpEnrolment {
+  secret: string;
+  otpauth_uri: string;
+}
+
+export interface Account {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  disabled: boolean;
+  totp_enabled: boolean;
+  created_at: string;
+}
+
+export interface SecurityStatus {
+  totp_enabled: boolean;
+  recovery_codes_left: number;
+  require_2fa: boolean;
+}
+
+export interface SessionInfo {
+  id: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  ip: string;
+  user_agent: string;
+  current: boolean;
+}
+
+export interface TokenBinding {
+  role: string;
+  scope: { environments?: string[]; tag_sets?: string[][] };
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  bindings: TokenBinding[];
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+}
+
 export interface SetupRequest {
   token: string;
   name: string;
   email: string;
   password: string;
+}
+
+export interface Settings {
+  'telemetry.enabled': boolean;
+  /** True when NUX_TELEMETRY=off forces telemetry off on the server. */
+  'telemetry.locked': boolean;
+  /** The address agents and browsers use; empty until the setup wizard saves it (INS-3). */
+  'server.public_url': string;
+  /** True once the administrator finished the setup wizard. */
+  'setup.completed': boolean;
 }
 
 export interface Host {
@@ -522,7 +587,7 @@ const NETWORK_ERROR: Omit<ApiError, 'status'> = {
 let csrfToken = '';
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {},
@@ -631,12 +696,83 @@ function openEvents(h: EventHandlers): () => void {
   return () => source.close();
 }
 
+/** Single sign-on settings; the client secret is write-only and never returned (ACC-3). */
+export interface OidcSettings {
+  configured: boolean;
+  issuer: string;
+  client_id: string;
+  client_secret_set: boolean;
+  scopes: string[];
+  groups_claim: string;
+  allowed_domains: string[];
+  auto_provision: boolean;
+  link_existing: boolean;
+  redirect_uri: string;
+}
+
+export interface OidcInput {
+  issuer: string;
+  client_id: string;
+  client_secret?: string;
+  scopes: string[];
+  groups_claim: string;
+  allowed_domains: string[];
+  auto_provision: boolean;
+  link_existing: boolean;
+}
+
 export const api = {
   setupStatus: () => request<{ setup_required: boolean }>('GET', '/setup/status'),
   completeSetup: async (r: SetupRequest) =>
     remember(await request<Session>('POST', '/setup/admin', r)),
-  login: async (email: string, password: string) =>
-    remember(await request<Session>('POST', '/auth/login', { email, password })),
+  login: async (email: string, password: string): Promise<LoginResult> => {
+    const result = await request<LoginResult>('POST', '/auth/login', { email, password });
+    return 'pending' in result ? result : remember(result);
+  },
+  /** Finishes a pending sign-in; recovery codes come back when it also completed an enrolment. */
+  verifyTotp: async (ticket: string, code: string) =>
+    remember(
+      await request<Session & { recovery_codes?: string[] }>('POST', '/auth/totp/verify', {
+        ticket,
+        code,
+      }),
+    ) as Session & { recovery_codes?: string[] },
+  pendingEnrol: (ticket: string) => request<TotpEnrolment>('POST', '/auth/totp/enrol', { ticket }),
+  users: () => request<{ users: Account[] }>('GET', '/users').then((r) => r.users),
+  createUser: (input: { email: string; name: string; password: string; role: string }) =>
+    request<Account>('POST', '/users', input),
+  updateUser: (id: string, patch: { name?: string; role?: string; disabled?: boolean }) =>
+    request<Account>('PATCH', `/users/${encodeURIComponent(id)}`, patch),
+  deleteUser: (id: string) => request<void>('DELETE', `/users/${encodeURIComponent(id)}`),
+  resetUser: (id: string, password: string) =>
+    request<void>('POST', `/users/${encodeURIComponent(id)}/reset`, { password }),
+  userSessions: (id: string) =>
+    request<{ sessions: SessionInfo[] }>('GET', `/users/${encodeURIComponent(id)}/sessions`).then(
+      (r) => r.sessions,
+    ),
+  revokeUserSession: (id: string, handle: string) =>
+    request<void>(
+      'DELETE',
+      `/users/${encodeURIComponent(id)}/sessions/${encodeURIComponent(handle)}`,
+    ),
+  securitySettings: () => request<{ require_2fa: boolean }>('GET', '/settings/security'),
+  setRequire2fa: (value: boolean) =>
+    request<{ require_2fa: boolean }>('PUT', '/settings/security', { require_2fa: value }),
+  changePassword: (current_password: string, new_password: string) =>
+    request<void>('POST', '/me/password', { current_password, new_password }),
+  mySecurity: () => request<SecurityStatus>('GET', '/me/security'),
+  totpEnrol: () => request<TotpEnrolment>('POST', '/me/totp/enrol', {}),
+  totpConfirm: (code: string) =>
+    request<{ recovery_codes: string[] }>('POST', '/me/totp/confirm', { code }),
+  totpDisable: (password: string) => request<void>('POST', '/me/totp/disable', { password }),
+  mySessions: () =>
+    request<{ sessions: SessionInfo[] }>('GET', '/me/sessions').then((r) => r.sessions),
+  revokeMySession: (handle: string) =>
+    request<void>('DELETE', `/me/sessions/${encodeURIComponent(handle)}`),
+  myTokens: () => request<{ tokens: ApiToken[] }>('GET', '/me/tokens').then((r) => r.tokens),
+  createToken: (input: { name: string; expires_in_days: number; bindings: TokenBinding[] }) =>
+    request<{ token: string; details: ApiToken }>('POST', '/me/tokens', input),
+  revokeToken: (id: string) => request<void>('DELETE', `/me/tokens/${encodeURIComponent(id)}`),
   me: async () => remember(await request<Session>('GET', '/me')),
   hosts: () => all<Host>('/hosts'),
   host: (id: string) => request<Host>('GET', `/hosts/${encodeURIComponent(id)}`),
@@ -714,6 +850,18 @@ export const api = {
     ),
   checkUptime: (id: string, signal?: AbortSignal) =>
     request<CheckUptime>('GET', `/checks/${encodeURIComponent(id)}/uptime`, undefined, {}, signal),
+  settings: () => request<Settings>('GET', '/settings'),
+  setTelemetryEnabled: (value: boolean) =>
+    request<Settings>('PUT', '/settings', { key: 'telemetry.enabled', value }),
+  setPublicUrl: (value: string) =>
+    request<Settings>('PUT', '/settings', { key: 'server.public_url', value }),
+  setSetupCompleted: (value: boolean) =>
+    request<Settings>('PUT', '/settings', { key: 'setup.completed', value }),
+  telemetryPreview: () => request<Record<string, unknown>>('GET', '/telemetry/preview'),
+  oidcStatus: () => request<{ enabled: boolean }>('GET', '/auth/oidc/status'),
+  oidcSettings: () => request<OidcSettings>('GET', '/settings/oidc'),
+  saveOidcSettings: (input: OidcInput) => request<OidcSettings>('PUT', '/settings/oidc', input),
+  deleteOidcSettings: () => request<void>('DELETE', '/settings/oidc'),
   statusPages: () => request<{ items: StatusPage[] }>('GET', '/status-pages').then((r) => r.items),
   statusPage: async (id: string): Promise<StatusPageWithEtag> => {
     const meta: { etag?: string } = {};
@@ -828,6 +976,19 @@ export const api = {
     return { rule, etag: meta.etag ?? '' };
   },
   deleteRule: (id: string) => request<void>('DELETE', `/rules/${encodeURIComponent(id)}`),
+  roleBindings: (signal?: AbortSignal) =>
+    request<{ items: RoleBinding[] }>('GET', '/role-bindings', undefined, {}, signal).then(
+      (r) => r.items,
+    ),
+  createRoleBinding: (b: RoleBindingInput) => request<RoleBinding>('POST', '/role-bindings', b),
+  deleteRoleBinding: (id: string) =>
+    request<void>('DELETE', `/role-bindings/${encodeURIComponent(id)}`),
+  auditSearch: (q: AuditQuery = {}, signal?: AbortSignal) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') p.set(k, String(v));
+    return request<Page<AuditEntry>>('GET', `/audit?${p.toString()}`, undefined, {}, signal);
+  },
+  auditVerify: () => request<AuditVerification>('GET', '/audit/verify'),
   alerts: (q: AlertQuery = {}, signal?: AbortSignal) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') p.set(k, String(v));
@@ -925,4 +1086,73 @@ export async function probeLogStream(query: string): Promise<ApiError | null> {
   } catch (e) {
     return e instanceof ApiRequestError ? e.error : null;
   }
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  ip: string;
+  result: 'success' | 'failure';
+  /** Secrets are masked by the server. */
+  details: Record<string, unknown>;
+  prev_hash: string;
+  hash: string;
+}
+
+export interface AuditQuery {
+  actor?: string;
+  /** Matches actions that start with this text. */
+  action?: string;
+  target_type?: string;
+  target_id?: string;
+  result?: string;
+  /** RFC 3339. */
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface AuditVerification {
+  ok: boolean;
+  entries: number;
+  broken_at?: number;
+  reason?: string;
+  code?: string;
+}
+
+/** Download URL of the JSON-lines export for a filter; a plain same-origin link, so the browser saves it. */
+export function auditExportUrl(q: AuditQuery): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q))
+    if (v !== undefined && v !== '' && k !== 'cursor' && k !== 'limit') p.set(k, String(v));
+  return `/api/v1/audit/export?${p.toString()}`;
+}
+
+export type Role = 'admin' | 'operator' | 'viewer';
+
+/** Narrows a role to environments or tag sets; empty means everywhere (ACC-5). */
+export interface RoleScope {
+  environments?: string[];
+  /** Each set is ANDed (`key:value` or `key`); the sets are ORed. */
+  tag_sets?: string[][];
+}
+
+export interface RoleBindingInput {
+  subject_type: 'user' | 'oidc_group';
+  subject: string;
+  role: Role;
+  scope: RoleScope;
+}
+
+export interface RoleBinding extends RoleBindingInput {
+  id: string;
+  /** The stored scope cannot be read, so the binding grants nothing. */
+  invalid?: boolean;
 }

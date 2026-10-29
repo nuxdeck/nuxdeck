@@ -6,9 +6,10 @@
     checked: boolean;
     hint?: string;
     disabled?: boolean;
+    onchange?: () => void;
   }
 
-  let { id, label, checked = $bindable(), hint, disabled = false }: Props = $props();
+  let { id, label, checked = $bindable(), hint, disabled = false, onchange }: Props = $props();
 </script>
 
 <div class="toggle">
@@ -17,6 +18,7 @@
     type="checkbox"
     bind:checked
     {disabled}
+    {onchange}
     aria-describedby={hint ? `${id}-hint` : undefined}
   />
   <div>
