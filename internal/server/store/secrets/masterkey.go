@@ -64,6 +64,21 @@ func LoadMasterKey(dataDir, keyFile string, getenv func(string) string) (key []b
 	return key, err == nil, err
 }
 
+// ReadMasterKey resolves the master key in the same order as LoadMasterKey but never creates
+// one. It returns nil and no error when no key exists yet, so read-only callers such as
+// backup cannot mint a key that no stored secret was sealed with.
+func ReadMasterKey(dataDir, keyFile string, getenv func(string) string) ([]byte, error) {
+	if strings.TrimSpace(getenv(EnvMasterKey)) != "" || keyFile != "" {
+		key, _, err := LoadMasterKey(dataDir, keyFile, getenv)
+		return key, err
+	}
+	key, err := readKeyFile(filepath.Join(dataDir, GeneratedKeyFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return key, err
+}
+
 func readKeyFile(path string) ([]byte, error) {
 	f, err := os.Open(path) //nolint:gosec // operator-supplied key path
 	if err != nil {
