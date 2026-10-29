@@ -45,7 +45,11 @@ type Hit struct {
 // Search finds hosts and containers whose name, tags or addresses match q, best matches first:
 // exact, then prefix, then substring; ties go to name matches over tag matches over address
 // matches, then alphabetical. Matching is case-insensitive and runs in memory.
-func (ix *Index) Search(q string, limit int) []Hit {
+func (ix *Index) Search(q string, limit int) []Hit { return ix.SearchAllowed(q, limit, nil, nil) }
+
+// SearchAllowed is Search limited to the hosts and containers the callers' scope accepts (ACC-5);
+// a nil predicate accepts everything. The predicates run under the index lock.
+func (ix *Index) SearchAllowed(q string, limit int, allowHost func(Host) bool, allowContainer func(Container, Host) bool) []Hit {
 	q = strings.ToLower(strings.TrimSpace(q))
 	if q == "" || len(q) > MaxSearchQuery {
 		return []Hit{}
@@ -58,7 +62,7 @@ func (ix *Index) Search(q string, limit int) []Hit {
 	hostName := make(map[string]string, len(ix.hosts))
 	for id, h := range ix.hosts {
 		hostName[id] = h.Hostname
-		if h.Status == StatusGone {
+		if h.Status == StatusGone || (allowHost != nil && !allowHost(h)) {
 			continue
 		}
 		cands := []cand{{FieldName, h.Hostname}}
@@ -70,7 +74,7 @@ func (ix *Index) Search(q string, limit int) []Hit {
 		}
 	}
 	for _, c := range ix.containers {
-		if c.GoneAt != nil {
+		if c.GoneAt != nil || (allowContainer != nil && !allowContainer(c, ix.hosts[c.HostID])) {
 			continue
 		}
 		cands := []cand{{FieldName, c.Name}}

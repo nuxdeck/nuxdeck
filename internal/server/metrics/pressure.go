@@ -46,6 +46,12 @@ type latest map[string][]sample // target ID -> newest sample of each series
 
 // Pressure ranks every live host and container by its newest samples. limit caps each list.
 func (s *Service) Pressure(ctx context.Context, limit int) (PressureReport, error) {
+	return s.PressureAllowed(ctx, limit, nil, nil)
+}
+
+// PressureAllowed is Pressure limited to the hosts and containers the caller's scope accepts (ACC-5);
+// a nil predicate accepts everything.
+func (s *Service) PressureAllowed(ctx context.Context, limit int, allowHost func(inventory.Host) bool, allowContainer func(inventory.Container, inventory.Host) bool) (PressureReport, error) {
 	now := s.now().UnixMilli()
 	vals, err := s.latest(ctx, now-pressureLookback, now)
 	if err != nil {
@@ -58,7 +64,10 @@ func (s *Service) Pressure(ctx context.Context, limit int) (PressureReport, erro
 	for cursor := ""; ; {
 		p := inv.Hosts(inventory.HostFilter{}, cursor, 500)
 		for _, h := range p.Items {
-			hosts[h.ID] = h
+			hosts[h.ID] = h // kept even when hidden: its containers need its CPU count
+			if allowHost != nil && !allowHost(h) {
+				continue
+			}
 			v := vals[h.ID]
 			row := Pressure{ID: h.ID, Name: h.Hostname}
 			if r := find(v, hostCPURatio, "cpu", "all"); r != nil {
@@ -79,6 +88,9 @@ func (s *Service) Pressure(ctx context.Context, limit int) (PressureReport, erro
 		for _, c := range p.Items {
 			v := vals[c.ID]
 			h := hosts[c.HostID]
+			if allowContainer != nil && !allowContainer(c, h) {
+				continue
+			}
 			row := Pressure{ID: c.ID, Name: c.Name, HostID: c.HostID}
 			if cores := find(v, ctrCPURatio, "", ""); cores != nil && h.CPUCount > 0 {
 				x := *cores / float64(h.CPUCount) * 100

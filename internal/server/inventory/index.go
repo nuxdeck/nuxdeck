@@ -83,6 +83,8 @@ type HostFilter struct {
 	Status      string // empty means online and offline
 	IncludeGone bool
 	Tags        []TagSelector // all must match
+	// Allow, if set, keeps only hosts it accepts: the caller's scope (ACC-5). It runs under the index lock.
+	Allow func(Host) bool
 }
 
 // ContainerFilter selects containers for List.
@@ -91,6 +93,9 @@ type ContainerFilter struct {
 	State       string
 	IncludeGone bool
 	Tags        []TagSelector // all must match
+	// Allow, if set, keeps only containers it accepts, given the container and its host (whose tags
+	// scope it too). It runs under the index lock.
+	Allow func(Container, Host) bool
 }
 
 // Page is one page of a cursor-paginated list ordered by ID (which sorts by creation time).
@@ -105,7 +110,7 @@ func (ix *Index) Hosts(f HostFilter, cursor string, limit int) Page[Host] {
 	defer ix.mu.RUnlock()
 	ids := make([]string, 0, len(ix.hosts))
 	for id, h := range ix.hosts {
-		if (h.Status == StatusGone && !f.IncludeGone) || (f.Status != "" && h.Status != f.Status) || !matchesAll(h.Tags, f.Tags) {
+		if (h.Status == StatusGone && !f.IncludeGone) || (f.Status != "" && h.Status != f.Status) || !matchesAll(h.Tags, f.Tags) || (f.Allow != nil && !f.Allow(h)) {
 			continue
 		}
 		ids = append(ids, id)
@@ -121,7 +126,7 @@ func (ix *Index) Containers(f ContainerFilter, cursor string, limit int) Page[Co
 	defer ix.mu.RUnlock()
 	ids := make([]string, 0, len(ix.containers))
 	for id, c := range ix.containers {
-		if (c.GoneAt != nil && !f.IncludeGone) || (f.HostID != "" && c.HostID != f.HostID) || (f.State != "" && c.State != f.State) || !matchesAll(c.Tags, f.Tags) {
+		if (c.GoneAt != nil && !f.IncludeGone) || (f.HostID != "" && c.HostID != f.HostID) || (f.State != "" && c.State != f.State) || !matchesAll(c.Tags, f.Tags) || (f.Allow != nil && !f.Allow(c, ix.hosts[c.HostID])) {
 			continue
 		}
 		ids = append(ids, id)

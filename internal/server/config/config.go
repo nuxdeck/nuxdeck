@@ -38,6 +38,15 @@ type Config struct {
 	Server Server `yaml:"server"`
 	// Alerting tunes alert notifications (ALR-2, ALR-3).
 	Alerting Alerting `yaml:"alerting"`
+	// Backup controls the automatic backup taken before database upgrades (NFR-6).
+	Backup Backup `yaml:"backup"`
+}
+
+// Backup configures backups that nuxd takes on its own.
+type Backup struct {
+	// PreUpgradeKeep is how many pre-upgrade archives <data_dir>/backups keeps; the oldest are
+	// deleted after each new one. 0 turns the automatic backup off. Default 3.
+	PreUpgradeKeep int `yaml:"pre_upgrade_keep"`
 }
 
 // Server describes how browsers reach nuxd.
@@ -122,6 +131,7 @@ func Defaults() Config {
 		HTTP:     HTTP{HTTPSAddr: ":8443", RedirectAddr: ":8080"},
 		Metrics:  Metrics{RetentionDays: 15, DownsampledRetentionDays: 90},
 		Alerting: Alerting{RepeatIntervalMinutes: 240, QueueSize: 256, Workers: 4},
+		Backup:   Backup{PreUpgradeKeep: 3},
 	}
 }
 
@@ -225,6 +235,9 @@ func (c Config) Validate() error {
 	}
 	if c.Metrics.DownsampledRetentionDays < c.Metrics.RetentionDays || c.Metrics.DownsampledRetentionDays > 3650 {
 		return errcode.New(errcode.SRVCfg002, "metrics.downsampled_retention_days must be from metrics.retention_days to 3650, got %d", c.Metrics.DownsampledRetentionDays)
+	}
+	if c.Backup.PreUpgradeKeep < 0 || c.Backup.PreUpgradeKeep > 100 {
+		return errcode.New(errcode.SRVCfg002, "backup.pre_upgrade_keep must be from 0 to 100, got %d", c.Backup.PreUpgradeKeep)
 	}
 	if c.Checks.MaxConcurrent < 0 || c.Checks.MaxConcurrent > 1024 {
 		return errcode.New(errcode.SRVCfg002, "checks.max_concurrent must be from 0 to 1024, got %d", c.Checks.MaxConcurrent)

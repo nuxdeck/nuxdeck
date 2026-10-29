@@ -19,6 +19,7 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver, registers "sqlite"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
+	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
 )
 
 //go:embed migrations/*.sql
@@ -29,7 +30,15 @@ type Store struct {
 	db *sql.DB
 	// Now supplies timestamps; nil means time.Now. Tests set it.
 	Now func() time.Time
+	// Groups returns the OIDC groups a user currently belongs to, so group role bindings apply
+	// (ACC-3). Nil means no group data: only direct user bindings apply.
+	Groups func(ctx context.Context, userID string) ([]string, error)
+
+	secretBox *secrets.Box
 }
+
+// UseSecrets gives the store the box that seals TOTP secrets (set once at startup).
+func (s *Store) UseSecrets(box *secrets.Box) { s.secretBox = box }
 
 func (s *Store) now() time.Time {
 	if s.Now != nil {
@@ -66,9 +75,20 @@ func (s *Store) DB() *sql.DB { return s.db }
 // InTx runs fn in a write transaction that is rolled back if fn fails.
 func (s *Store) InTx(ctx context.Context, fn func(tx *sql.Tx) error) error { return s.inTx(ctx, fn) }
 
+// BeforeUpgrade runs before pending migrations are applied to an existing database. from
+// is the highest applied migration and to the highest pending one. Returning an error
+// stops the upgrade and leaves the database as it was.
+type BeforeUpgrade func(ctx context.Context, db *sql.DB, from, to int) error
+
 // Open creates the data directory if needed, opens nux.db in WAL mode and
 // applies pending migrations.
 func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error) {
+	return OpenWith(ctx, dataDir, log, nil)
+}
+
+// OpenWith is Open with a hook that runs before pending migrations on an existing
+// database (BAK-UPG-001 pre-upgrade backups). A nil hook behaves like Open.
+func OpenWith(ctx context.Context, dataDir string, log *slog.Logger, beforeUpgrade BeforeUpgrade) (*Store, error) {
 	if err := prepareDataDir(dataDir); err != nil {
 		return nil, err
 	}
@@ -87,7 +107,7 @@ func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error)
 		_ = db.Close()
 		return nil, errcode.Wrap(errcode.SRVMig001, "load embedded migrations", err)
 	}
-	if err := migrate(ctx, db, migrations, log); err != nil {
+	if err := migrateHooked(ctx, db, migrations, log, beforeUpgrade); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -138,4 +158,18 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 // Close releases the database.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// LatestSchemaVersion returns the highest migration compiled into this build. Restore uses it
+// to refuse archives written by a newer nuxd.
+func LatestSchemaVersion() (int, error) {
+	fsys, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return 0, errcode.Wrap(errcode.SRVMig001, "load embedded migrations", err)
+	}
+	migrations, err := loadMigrations(fsys)
+	if err != nil {
+		return 0, err
+	}
+	return len(migrations), nil
 }

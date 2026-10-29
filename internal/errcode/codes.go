@@ -38,6 +38,31 @@ const (
 	AuthDeny005  Code = "AUTH-DENY-005"
 	AuthSetup001 Code = "AUTH-SETUP-001"
 	AuthSetup002 Code = "AUTH-SETUP-002"
+	AuthRBAC001  Code = "AUTH-RBAC-001"
+	AuthRBAC002  Code = "AUTH-RBAC-002"
+	AuthRBAC003  Code = "AUTH-RBAC-003"
+	AuthRBAC004  Code = "AUTH-RBAC-004"
+	AuthTOTP001  Code = "AUTH-TOTP-001"
+	AuthTOTP002  Code = "AUTH-TOTP-002"
+	AuthTOTP003  Code = "AUTH-TOTP-003"
+	AuthUser001  Code = "AUTH-USER-001"
+	AuthUser002  Code = "AUTH-USER-002"
+	AuthUser003  Code = "AUTH-USER-003"
+	AuthToken001 Code = "AUTH-TOKEN-001" //nolint:gosec // an error code, not a credential
+	AuthToken002 Code = "AUTH-TOKEN-002" //nolint:gosec // an error code, not a credential
+	AuthToken003 Code = "AUTH-TOKEN-003" //nolint:gosec // an error code, not a credential
+	AuthLock001  Code = "AUTH-LOCK-001"
+	AuthOIDC001  Code = "AUTH-OIDC-001"
+	AuthOIDC002  Code = "AUTH-OIDC-002"
+	AuthOIDC003  Code = "AUTH-OIDC-003"
+	AuthOIDC004  Code = "AUTH-OIDC-004"
+	AuthOIDC005  Code = "AUTH-OIDC-005"
+	AuthOIDC006  Code = "AUTH-OIDC-006"
+	AuthOIDC007  Code = "AUTH-OIDC-007"
+	AuthOIDC008  Code = "AUTH-OIDC-008"
+	AuthOIDC009  Code = "AUTH-OIDC-009"
+	AuthOIDC010  Code = "AUTH-OIDC-010"
+	AuthOIDC011  Code = "AUTH-OIDC-011"
 	LOGStr001    Code = "LOG-STR-001"
 	LOGStr002    Code = "LOG-STR-002"
 	LOGStr003    Code = "LOG-STR-003"
@@ -100,6 +125,30 @@ const (
 	CLIArg001    Code = "CLI-ARG-001"
 	CLIArg002    Code = "CLI-ARG-002"
 	CLIArg003    Code = "CLI-ARG-003"
+	CLINuxd001   Code = "CLI-NUXD-001"
+	CLIArg004    Code = "CLI-ARG-004"
+	CLIAuth001   Code = "CLI-AUTH-001"
+	CLICfg001    Code = "CLI-CFG-001"
+	CLINet001    Code = "CLI-NET-001"
+	CLINet002    Code = "CLI-NET-002"
+	CLILog001    Code = "CLI-LOG-001"
+	TELSend001   Code = "TEL-SEND-001"
+	TELSend002   Code = "TEL-SEND-002"
+	BAKFmt001    Code = "BAK-FMT-001"
+	BAKVer001    Code = "BAK-VER-001"
+	BAKAuth001   Code = "BAK-AUTH-001"
+	BAKTrunc001  Code = "BAK-TRUNC-001"
+	BAKPath001   Code = "BAK-PATH-001"
+	BAKHash001   Code = "BAK-HASH-001"
+	BAKLimit001  Code = "BAK-LIMIT-001"
+	BAKPass001   Code = "BAK-PASS-001" //nolint:gosec // an error code name, not a credential
+	BAKLock001   Code = "BAK-LOCK-001"
+	BAKSrc001    Code = "BAK-SRC-001"
+	BAKRest001   Code = "BAK-REST-001"
+	BAKUpg001    Code = "BAK-UPG-001"
+	BAKAudit001  Code = "BAK-AUDIT-001"
+	AUDChain001  Code = "AUD-CHAIN-001"
+	AUDExp001    Code = "AUD-EXP-001"
 )
 
 // Entry describes a code for users, docs and the UI.
@@ -137,6 +186,31 @@ func Entries() []Entry {
 		{AuthDeny005, "Permission denied", "Your role does not allow this action.", "Ask an administrator for the required role."},
 		{AuthSetup001, "Setup token not accepted", "The setup token is missing or wrong.", "Run nuxd setup-token on the server and paste its output."},
 		{AuthSetup002, "Setup already completed", "This server already has an administrator.", "Sign in instead."},
+		{AuthRBAC001, "Action not permitted", "The action is not known to the permission policy, so it is denied.", "Report the request ID from the X-Request-ID response header."},
+		{AuthRBAC002, "Outside your scope", "Your role is limited to certain environments or tags and does not cover this item.", "Ask an administrator to widen the scope of your role."},
+		{AuthRBAC003, "Role binding not accepted", "The role binding has an unknown role or subject, or an invalid scope.", "Use the role admin, operator or viewer, a user ID or group name, and a scope of environments and tag sets."},
+		{AuthRBAC004, "Role binding not found", "No such role binding.", "Reload the list of role bindings."},
+		{AuthTOTP001, "Verification code not accepted", "The code is wrong, expired or was already used.", "Enter the current 6-digit code from your authenticator app, or a recovery code."},
+		{AuthTOTP002, "Sign-in step expired", "The second sign-in step timed out or was used too often.", "Sign in again with your password."},
+		{AuthTOTP003, "Two-factor state does not allow this", "Two-factor authentication is already on, or was not started.", "Start the enrolment again, or sign in with your authenticator."},
+		{AuthUser001, "Email already in use", "An account with this email address already exists.", "Use a different email address."},
+		{AuthUser002, "Last administrator", "This would leave the server without an enabled administrator.", "Make another user an administrator first."},
+		{AuthUser003, "User not found", "No such user.", "Reload the list and try again."},
+		{AuthToken001, "API token not accepted", "The API token is unknown, expired or revoked.", "Create a new token in your account settings."},
+		{AuthToken002, "Token scope too wide", "A token can only grant roles and scopes its owner holds.", "Choose a role and scope no wider than your own."},
+		{AuthToken003, "API token not found", "No such token for your account.", "Reload the list and try again."},
+		{AuthLock001, "Account temporarily locked", "Too many failed attempts for this account from this address.", "Wait 15 minutes and try again."},
+		{AuthOIDC001, "Single sign-on not set up", "No identity provider is configured for single sign-on.", "Ask an administrator to configure single sign-on in Settings, or sign in with your password."},
+		{AuthOIDC002, "Sign-in attempt expired", "The sign-in attempt timed out or did not start in this browser.", "Start the sign-in again from the sign-in page."},
+		{AuthOIDC003, "Identity provider did not complete sign-in", "The identity provider refused the sign-in or could not be reached.", "Try again. If it keeps failing, ask an administrator to check the single sign-on settings."},
+		{AuthOIDC004, "Identity token not accepted", "The identity provider token failed a check on its signature, algorithm, issuer, audience, expiry or nonce.", "Ask an administrator to check the client ID, the issuer and the signing algorithm of the provider."},
+		{AuthOIDC005, "Email not verified", "The identity provider did not confirm this email address, or sent none.", "Verify your email address with the identity provider, then sign in again."},
+		{AuthOIDC006, "Email domain not allowed", "Single sign-on is limited to certain email domains, and yours is not one of them.", "Ask an administrator to allow your domain."},
+		{AuthOIDC007, "No account for this sign-in", "No account matches this identity, and accounts are not created on sign-in.", "Ask an administrator to create your account or to allow automatic accounts."},
+		{AuthOIDC008, "No role for this sign-in", "None of your identity provider groups has a role on this server.", "Ask an administrator to bind one of your groups to a role."},
+		{AuthOIDC009, "Account disabled", "This account is disabled.", "Ask an administrator to enable it."},
+		{AuthOIDC010, "Account already linked", "The email address or identity already belongs to another account.", "Ask an administrator to check the accounts."},
+		{AuthOIDC011, "Public URL missing", "Single sign-on needs the public URL of this server for its redirect address.", "Set server.public_url (NUXD_PUBLIC_URL) to the https address users open, then restart nuxd."},
 		{LOGStr001, "Too many live log streams", "The limit on concurrent live log streams was reached.", "Close other log tabs or try again in a moment."},
 		{LOGStr002, "Invalid log stream request", "The log stream request was malformed or duplicated.", "Reload the page and open the log again."},
 		{LOGStr003, "Log stream lagging", "Your connection could not keep up, so some log lines were dropped.", "Narrow the stream with a filter or watch a quieter source."},
@@ -196,9 +270,33 @@ func Entries() []Entry {
 		{ALRSend006, "Test sent too often", "A test message was sent to this channel too recently.", "Wait a few seconds and try again."},
 		{ALRSend007, "Notification queue full", "Too many notifications were waiting, so this one was dropped.", "Check slow or failing channels; alerts are still recorded."},
 		{ALRSend008, "Channel disabled", "The channel is disabled, so nothing was sent.", "Enable the channel."},
+		{AUDChain001, "Audit chain broken", "The hash chain of the audit log does not verify: an entry was modified, removed or inserted outside nuxd.", "Restore the database from a backup taken before the first broken entry and investigate who had write access to it."},
+		{AUDExp001, "Audit export failed", "The audit export could not be completed.", "Try again; if it keeps happening, report the request ID from the X-Request-ID response header."},
 		{CLIArg001, "Unknown or missing command", "The command is missing or not recognised.", "Run nux without arguments to list the commands."},
 		{CLIArg002, "Invalid command-line argument", "A flag or argument is not valid.", "Check the usage text for the command."},
 		{CLIArg003, "Command not implemented yet", "This command is a placeholder in this version.", "Update nux, or see the roadmap for when it arrives."},
+		{CLINuxd001, "nuxd not found", "nux backup and nux restore run the nuxd binary, which holds the server data and master key, and it is not on PATH.", "Run them on the server host, or set NUX_NUXD_BIN to the nuxd binary's path."},
+		{CLIArg004, "Ambiguous target", "More than one host, container or check matches the name you gave.", "Use the ID shown by the list command instead of the name."},
+		{CLIAuth001, "Not signed in", "No API token is available for nux.", "Run nux login --server URL --token-file FILE, or set NUX_TOKEN."},
+		{CLICfg001, "Config file unavailable", "The nux config file could not be read or written.", "Check that the file and its directory are readable and writable by your user."},
+		{CLINet001, "Server unreachable", "nux could not complete the request to nuxd.", "Check the server URL and that nuxd is running, then try again."},
+		{CLINet002, "Server certificate not trusted", "The server certificate is not signed by a trusted authority, or does not match the pinned fingerprint.", "Use --ca-file for a private CA, or --pin with the fingerprint shown by nuxd. Re-run login if the certificate was replaced on purpose."},
+		{CLILog001, "Log stream stopped", "The log stream was refused or kept failing, so nux gave up.", "Check the target name, your access to it, and that the host is online."},
+		{TELSend001, "Telemetry report not delivered", "The daily telemetry report could not reach the endpoint and was dropped.", "Nothing to fix; the next report is tried tomorrow. Turn telemetry off in Settings if this host should not reach the internet."},
+		{TELSend002, "Telemetry endpoint refused the report", "The telemetry endpoint answered with an error status and the report was dropped.", "Nothing to fix; the next report is tried tomorrow."},
+		{BAKFmt001, "Backup archive unreadable", "The file is not a Nux Deck backup or its contents are corrupt.", "Use an archive written by nuxd backup, and copy it again if the transfer may have failed."},
+		{BAKVer001, "Backup from a newer version", "The archive was written by a newer nuxd than this one and cannot be restored safely.", "Install the nuxd version that wrote the archive, or a newer one, and restore with it."},
+		{BAKAuth001, "Backup passphrase rejected", "The passphrase is wrong, or the archive was altered after it was written.", "Check the passphrase file. If it is correct, the archive is damaged: use another copy."},
+		{BAKTrunc001, "Backup archive truncated", "The archive ends before its last section, so it is incomplete.", "Copy the archive again; nothing was restored."},
+		{BAKPath001, "Unsafe backup entry", "The archive holds an entry with an absolute, parent or linked path, or a special file.", "Do not restore this archive; it was not written by nuxd backup."},
+		{BAKHash001, "Backup checksum mismatch", "A file in the archive does not match its recorded checksum, or the file list does not match.", "Use another copy of the archive; nothing was restored."},
+		{BAKLimit001, "Backup exceeds size limits", "The archive declares more data than the restore limits allow.", "Check the archive is not a decompression bomb; raise the limits only for a trusted archive."},
+		{BAKPass001, "Backup passphrase missing", "The archive or command needs a passphrase, and none was given or the passphrase file is empty.", "Pass --passphrase-file with the passphrase used to create the archive, or pass --unencrypted when creating one without a passphrase."},
+		{BAKLock001, "Data directory in use", "nuxd is running against this data directory, so it cannot be backed up or restored now.", "Stop nuxd (systemctl stop nuxd), run the command, then start nuxd again."},
+		{BAKSrc001, "Data directory has unsupported entries", "The data directory holds a symbolic link or special file that a backup will not copy.", "Replace the link with the file it points to, or remove the special file, then back up again."},
+		{BAKRest001, "Restore not completed", "The restore could not replace the data directory. The previous state was put back or left in place.", "Read the message, fix the cause (for example an existing .pre-restore directory), and run restore again."},
+		{BAKAudit001, "Restored audit log is broken", "The archive's audit hash chain does not verify, so the restore was refused and the current data directory was left as it was.", "Use an archive taken before the broken entry, and investigate who could write to the database."},
+		{BAKUpg001, "Pre-upgrade backup failed", "A backup could not be written before database migrations, so the migrations were not applied and nuxd did not start.", "Check free disk space and the backups directory permissions, then start nuxd again."},
 	}
 }
 
