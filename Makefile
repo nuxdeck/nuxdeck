@@ -1,4 +1,4 @@
-.PHONY: lint test build web vuln licences release-check dev dev-agent proto api e2e release-snapshot
+.PHONY: lint test build web vuln licences release-check dev dev-agent proto api api-check e2e release-snapshot bench load load-full
 
 web/node_modules: web/package-lock.json
 	cd web && npm ci
@@ -41,11 +41,45 @@ dev-agent:
 proto:
 	go run github.com/bufbuild/buf/cmd/buf@v1.75.0 generate
 
-api:
-	@echo "make api: not implemented yet (NUX-40)" >&2; exit 1
+# api regenerates the Go client (pkg/client) and the TypeScript types (web/src/lib/api/schema.d.ts)
+# from api/openapi.yaml. The generator versions are exact; output is deterministic, so api-check
+# can prove that a committed client matches its description.
+OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
+API_SPEC := api/openapi.yaml
+API_GO_OUT := pkg/client/client.gen.go
+API_TS_OUT := web/src/lib/api/schema.d.ts
+
+api: web/node_modules
+	go run $(OAPI_CODEGEN) --config api/oapi-codegen.yaml $(API_SPEC)
+	@tmp=$$(mktemp) && { printf '// SPDX-License-Identifier: Apache-2.0\n\n'; cat $(API_GO_OUT); } > "$$tmp" && mv "$$tmp" $(API_GO_OUT) && chmod 644 $(API_GO_OUT)
+	cd web && npx --no-install openapi-typescript ../$(API_SPEC) --output src/lib/api/schema.d.ts
+	@tmp=$$(mktemp) && { printf '// SPDX-License-Identifier: AGPL-3.0-only\n\n'; cat $(API_TS_OUT); } > "$$tmp" && mv "$$tmp" $(API_TS_OUT) && chmod 644 $(API_TS_OUT)
+	cd web && npx --no-install prettier --write src/lib/api/schema.d.ts >/dev/null
+
+api-check:
+	snapshot=$$(mktemp -d) && cp $(API_GO_OUT) $(API_TS_OUT) "$$snapshot"/ && \
+	$(MAKE) --no-print-directory api && \
+	{ cmp -s "$$snapshot/client.gen.go" $(API_GO_OUT) && cmp -s "$$snapshot/schema.d.ts" $(API_TS_OUT); }; \
+	status=$$?; rm -rf "$$snapshot"; \
+	if [ $$status -ne 0 ]; then echo "api-check: generated code is stale; run make api and commit the result" >&2; fi; \
+	exit $$status
 
 e2e:
 	@echo "make e2e: not implemented yet (NUX-44)" >&2; exit 1
+
+# bench runs the resource-budget tests (NFR-1 collector budget) and the server ingest benchmark.
+# It runs without -race, because the budgets measure CPU and allocations.
+bench:
+	go test -count=1 -run '^TestNFR1' -bench . -benchmem ./internal/agent/metrics/ ./internal/server/metrics/
+
+# load runs the smoke variant of the load harness (20 agents, 100 checks, 30 s), as CI does.
+# load-full ramps to 200 agents and 1,000 checks for NFR-2 and NFR-4; it takes about 15 minutes at
+# the default 5-minute windows. Pass LOAD_ARGS, for example LOAD_ARGS="-time-scale 10 -window 2m".
+load: build
+	go run ./test/load -nuxd bin/nuxd -profile smoke $(LOAD_ARGS)
+
+load-full: build
+	go run ./test/load -nuxd bin/nuxd -profile full $(LOAD_ARGS)
 
 release-snapshot:
 	go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=sign

@@ -24,6 +24,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/backup"
 	"github.com/nuxdeck/nuxdeck/internal/server/checks"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
 	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
@@ -35,6 +36,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
 	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
+	"github.com/nuxdeck/nuxdeck/internal/server/telemetry"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 	"github.com/nuxdeck/nuxdeck/web"
@@ -57,6 +59,12 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) > 0 && args[0] == "setup-token" {
 		return setupToken(args[1:], stdout, stderr, getenv)
+	}
+	if len(args) > 0 && args[0] == "backup" {
+		return runBackup(ctx, args[1:], stdout, stderr, getenv)
+	}
+	if len(args) > 0 && args[0] == "restore" {
+		return runRestore(ctx, args[1:], stdout, stderr, getenv)
 	}
 	fs := flag.NewFlagSet("nuxd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -92,8 +100,17 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return errcode.Wrap(errcode.SRVCfg002, "logger", err)
 	}
+	// Held for the whole run so backup and restore cannot copy files under a live server (NFR-6).
+	dataLock, err := backup.LockDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dataLock.Release() }()
 
-	db, err := store.Open(ctx, cfg.DataDir, log)
+	db, err := store.OpenWith(ctx, cfg.DataDir, log, backup.PreUpgradeHook(backup.PreUpgradeConfig{
+		DataDir: cfg.DataDir, Keep: cfg.Backup.PreUpgradeKeep, KeyFile: cfg.Secrets.MasterKeyFile,
+		Getenv: getenv, NuxdVersion: version, Log: log,
+	}))
 	if err != nil {
 		return err
 	}
@@ -102,6 +119,8 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 			log.Error("close database", "error", err)
 		}
 	}()
+
+	adoptStoredPublicURL(ctx, db, &cfg, log)
 
 	secretBox, err := openSecrets(ctx, db, cfg, getenv, log)
 	if err != nil {
@@ -123,10 +142,21 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return errcode.Wrap(errcode.SRVIO001, "load embedded web UI", err)
 	}
-	svc, err := newAuthService(ctx, db, cfg.DataDir, log)
+	db.UseSecrets(secretBox)
+	hasher, passwords := auth.NewHasher(), auth.NewPasswordPolicy()
+	accounts, err := auth.NewAccounts(auth.AccountsConfig{Repo: db, Hasher: hasher, Passwords: passwords, Log: log})
+	if err != nil {
+		return errcode.Wrap(errcode.APIInt001, "start accounts", err)
+	}
+	svc, err := newAuthService(ctx, db, cfg.DataDir, log, hasher, passwords, accounts)
 	if err != nil {
 		return err
 	}
+	oidcSvc, err := auth.NewOIDC(auth.OIDCConfig{Repo: db, Service: svc, PublicURL: cfg.Server.PublicURL, Log: log})
+	if err != nil {
+		return errcode.Wrap(errcode.APIInt001, "start single sign-on", err)
+	}
+	db.Groups = db.OIDCGroupsOf
 	ca, err := pki.LoadOrCreateCA(filepath.Join(cfg.DataDir, "pki"), time.Now())
 	if err != nil {
 		return err
@@ -184,11 +214,22 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	statusDone := make(chan struct{})
 	go func() { defer close(statusDone); statusSvc.Run(statusCtx) }()
 	defer func() { stopStatus(); <-statusDone }()
+	telSvc := telemetry.New(telemetry.Options{
+		DB: db, Source: telemetry.DBSource{DB: db.DB(), SSO: ssoConfigured(oidcSvc, log)}, Log: log,
+		Info:   telemetry.Info{Version: version, InstallMethod: getenv("NUX_INSTALL_METHOD")},
+		Locked: strings.EqualFold(getenv("NUX_TELEMETRY"), "off"),
+	})
+	telCtx, stopTel := context.WithCancel(ctx)
+	telDone := make(chan struct{})
+	go func() { defer close(telDone); telSvc.Run(telCtx) }()
+	defer func() { stopTel(); <-telDone }()
 	alertSvc, alertChannels, stopAlerting := startAlerting(ctx, db, secretBox, checkSvc, inv, mt, cfg, log)
 	defer stopAlerting()
+	verifyAuditAtStartup(ctx, db, log)
 	handler := api.Handler(api.Options{
-		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, StatusPages: statusSvc,
-		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Checks: checkSvc, Logs: logBroker, Audit: db, Alerting: alertSvc, Channels: alertChannels,
+		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, Accounts: accounts, StatusPages: statusSvc, Telemetry: telSvc,
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Checks: checkSvc, Logs: logBroker, Audit: db, Alerting: alertSvc, Channels: alertChannels, RoleBindings: db,
+		OIDC: oidcSvc,
 	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
 	if err != nil {
@@ -273,10 +314,10 @@ func gatewayURL(configured string) string {
 
 // newAuthService builds the auth module. While no account exists it makes sure
 // a setup token is on disk; the token itself is never logged.
-func newAuthService(ctx context.Context, db *store.Store, dataDir string, log *slog.Logger) (*auth.Service, error) {
+func newAuthService(ctx context.Context, db *store.Store, dataDir string, log *slog.Logger, hasher *auth.Hasher, passwords *auth.PasswordPolicy, accounts *auth.Accounts) (*auth.Service, error) {
 	token := auth.NewSetupToken(dataDir)
 	svc, err := auth.NewService(ctx, auth.Config{
-		Repo: db, Hasher: auth.NewHasher(), Passwords: auth.NewPasswordPolicy(), SetupToken: token, Log: log,
+		Repo: db, Hasher: hasher, Passwords: passwords, SetupToken: token, Log: log, Accounts: accounts,
 	})
 	if err != nil {
 		return nil, errcode.Wrap(errcode.APIInt001, "start auth", err)
@@ -331,4 +372,17 @@ func getenvDefault(getenv func(string) string, key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// ssoConfigured reports whether single sign-on is set up, for the telemetry feature flag. A
+// failed read reports false and is logged; telemetry must not stop on it.
+func ssoConfigured(svc *auth.OIDC, log *slog.Logger) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		on, err := svc.Enabled(ctx)
+		if err != nil {
+			log.Warn("could not read sso settings for telemetry", "error", err)
+			return false
+		}
+		return on
+	}
 }

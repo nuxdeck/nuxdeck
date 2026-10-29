@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
+	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/remote"
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 )
 
@@ -31,7 +32,9 @@ Commands:
   version   print the nux version
   agent     enrol this host and run the host agent (nux agent enroll | run)
   sockguard serve the read-only container API proxy (used by the agent, not by hand)
-  login     sign in to nuxd (not implemented yet)
+  backup    write one archive of all nuxd state (run on the server host; runs nuxd backup)
+  restore   restore an archive into a data directory (run on the server host; runs nuxd restore)
+  login     sign in to nuxd and store an API token (nux help lists the remote commands)
 
 Flags:
 `
@@ -80,12 +83,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return fail(stderr, err, 2)
 		}
 		return runSockguard(ctx, fs.Args()[1:], settings, stderr, getenv)
-	case "login":
-		if _, err := cli.Resolve(flags, getenv, os.UserConfigDir); err != nil {
-			return fail(stderr, err, 2)
-		}
-		return fail(stderr, errcode.New(errcode.CLIArg003, "nux %s is not implemented yet", cmd), 1)
+	case "backup", "restore":
+		return runNuxd(ctx, cmd, fs.Args()[1:], stdin, stdout, stderr, getenv)
 	default:
+		if remote.IsCommand(cmd) {
+			env := remote.Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Getenv: getenv, UserConfigDir: os.UserConfigDir}
+			return remote.Run(ctx, cmd, fs.Args()[1:], env, flags.Server)
+		}
 		fs.Usage()
 		return fail(stderr, errcode.New(errcode.CLIArg001, "unknown command %q", cmd), 2)
 	}
