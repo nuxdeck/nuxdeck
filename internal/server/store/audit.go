@@ -68,3 +68,9 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (int, error) {
 	}
 	return n, rows.Err()
 }
+
+// AppendAudit adds an entry inside the caller's transaction, so a change and its audit
+// record commit together. It is for modules that own their tables (checks, channels).
+func (s *Store) AppendAudit(ctx context.Context, tx *sql.Tx, ev audit.Event) error {
+	return s.appendAudit(ctx, tx, ev)
+}

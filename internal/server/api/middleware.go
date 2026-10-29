@@ -9,7 +9,11 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
+
+	"github.com/nuxdeck/nuxdeck/internal/errcode"
+	"github.com/nuxdeck/nuxdeck/internal/server/auth"
 )
 
 type ctxKey struct{}
@@ -84,4 +88,51 @@ func recoverer(log *slog.Logger, next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// bearerToken returns the API token from an Authorization: Bearer header. present
+// is true whenever the header uses the Bearer scheme, even if the token is empty,
+// so a bad token is refused rather than silently falling back to a cookie.
+func bearerToken(r *http.Request) (token string, present bool) {
+	h := r.Header.Get("Authorization")
+	const prefix = "bearer "
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return "", false
+	}
+	return strings.TrimSpace(h[len(prefix):]), true
+}
+
+// reauthenticate looks the caller up again, as begin did, for a long-lived stream. It reads the
+// credential from the request, so a bearer token is checked as well as a session cookie.
+func (a *authAPI) reauthenticate(ctx context.Context, r *http.Request) (auth.Principal, bool) {
+	if token, present := bearerToken(r); present {
+		p, err := a.svc.AuthenticateToken(ctx, token)
+		return p, err == nil && p.Authenticated()
+	}
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return auth.Principal{}, false
+	}
+	p, _, err := a.svc.Authenticate(ctx, c.Value)
+	return p, err == nil && p.Authenticated()
+}
+
+// beginToken authenticates an API token. A token request carries no ambient
+// credential, so the cross-site checks do not apply: it is given a one-request
+// CSRF value that the shared handlers then find in place. It never creates a session.
+func (a *authAPI) beginToken(w http.ResponseWriter, r *http.Request, token string) (auth.Principal, *auth.Session, bool) {
+	p, err := a.svc.AuthenticateToken(r.Context(), token)
+	if err != nil {
+		a.fail(w, r, err)
+		return p, nil, false
+	}
+	if !p.Authenticated() {
+		a.fail(w, r, errcode.New(errcode.AuthToken001, "token not accepted"))
+		return p, nil, false
+	}
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	csrf := hex.EncodeToString(b)
+	r.Header.Set(csrfHeader, csrf)
+	return p, &auth.Session{CSRFToken: csrf}, true
 }

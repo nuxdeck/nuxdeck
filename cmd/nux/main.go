@@ -4,14 +4,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/cli"
+	"github.com/nuxdeck/nuxdeck/cmd/nux/internal/remote"
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 )
 
@@ -26,17 +30,23 @@ const usage = `Usage: nux [flags] <command>
 
 Commands:
   version   print the nux version
-  agent     run the host agent (not implemented yet)
-  login     sign in to nuxd (not implemented yet)
+  agent     enrol this host and run the host agent (nux agent enroll | run)
+  sockguard serve the read-only container API proxy (used by the agent, not by hand)
+  backup    write one archive of all nuxd state (run on the server host; runs nuxd backup)
+  restore   restore an archive into a data directory (run on the server host; runs nuxd restore)
+  login     sign in to nuxd and store an API token (nux help lists the remote commands)
 
 Flags:
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv)
+	stop()
+	os.Exit(code)
 }
 
-func run(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	var flags cli.Flags
 	fs := flag.NewFlagSet("nux", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -61,12 +71,25 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "version":
 		_, _ = fmt.Fprintf(stdout, "nux %s (commit %s, built %s) %s/%s %s\n", version, commit, date, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return 0
-	case "agent", "login":
-		if _, err := cli.Resolve(flags, getenv, os.UserConfigDir); err != nil {
+	case "agent":
+		settings, err := cli.Resolve(flags, getenv, os.UserConfigDir)
+		if err != nil {
 			return fail(stderr, err, 2)
 		}
-		return fail(stderr, errcode.New(errcode.CLIArg003, "nux %s is not implemented yet", cmd), 1)
+		return runAgent(ctx, fs.Args()[1:], settings, stdin, stdout, stderr, getenv)
+	case "sockguard":
+		settings, err := cli.Resolve(flags, getenv, os.UserConfigDir)
+		if err != nil {
+			return fail(stderr, err, 2)
+		}
+		return runSockguard(ctx, fs.Args()[1:], settings, stderr, getenv)
+	case "backup", "restore":
+		return runNuxd(ctx, cmd, fs.Args()[1:], stdin, stdout, stderr, getenv)
 	default:
+		if remote.IsCommand(cmd) {
+			env := remote.Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Getenv: getenv, UserConfigDir: os.UserConfigDir}
+			return remote.Run(ctx, cmd, fs.Args()[1:], env, flags.Server)
+		}
 		fs.Usage()
 		return fail(stderr, errcode.New(errcode.CLIArg001, "unknown command %q", cmd), 2)
 	}

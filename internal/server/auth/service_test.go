@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -170,7 +171,8 @@ func TestFailuresAreRateLimitedPerAddress(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < maxFailuresPerWindow; i++ {
-		_, _ = h.svc.Login(ctx, "ada@example.com", "wrong password here", client)
+		// Distinct accounts: failures on one account lock that account first (ACC-7).
+		_, _ = h.svc.Login(ctx, fmt.Sprintf("user%d@example.com", i), "wrong password here", client)
 	}
 	// Even the right password is refused while blocked, and nothing more is audited.
 	before := len(h.repo.audits)

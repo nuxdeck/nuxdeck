@@ -1,0 +1,4448 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Nux Deck REST API, version 1. Every route under /api/v1 is described here; the coverage test in
+# internal/server/api/openapi_test.go fails when a route and this document disagree.
+# Maintained by hand. `make api` regenerates pkg/client and web/src/lib/api/schema.d.ts from it.
+openapi: 3.1.0
+info:
+  title: Nux Deck API
+  version: 0.1.0
+  summary: Operations console REST API
+  description: |
+    JSON over HTTPS. Every UI action is available here (CLI-1).
+
+    Authentication: a browser signs in with `POST /auth/login` and receives the `__Host-nux_session`
+    cookie plus a CSRF token. Scripts send `Authorization: Bearer <token>` with a personal API token
+    from `POST /me/tokens`. Bearer requests skip CSRF.
+
+    Errors share one shape, `{"error": {"code", "message", "hint", "field"}}`. Codes are stable and
+    listed in `internal/errcode/codes.go`. Lists are cursor paginated: `cursor` is opaque, pass the
+    previous `next_cursor` back; `limit` defaults to 50 and is at most 500.
+
+    Writes that change an existing object need `If-Match` set to the ETag from the last read
+    (428 when missing, 412 when stale). Every list and every call is filtered by the caller's scope.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: Nux Deck
+    url: https://nuxdeck.com
+servers:
+  - url: /
+    description: The server that serves this document.
+security:
+  - sessionCookie: []
+  - bearerToken: []
+tags:
+  - name: Setup
+    description: First-run administrator setup.
+  - name: Auth
+    description: Sign-in, sign-out, second factor and single sign-on.
+  - name: Account
+    description: The signed-in user's profile, password, two-factor, sessions and API tokens.
+  - name: Users
+    description: User administration (admin).
+  - name: Role bindings
+    description: Role and scope grants (admin).
+  - name: Settings
+    description: Server settings, telemetry and single sign-on configuration (admin).
+  - name: Audit
+    description: Audit search, export and chain verification (admin).
+  - name: Agents
+    description: Agent enrolment tokens and revocation (admin).
+  - name: Inventory
+    description: Hosts, containers, tags, owners and live events.
+  - name: Search
+    description: Command palette search across hosts and containers.
+  - name: Metrics
+    description: Chart data and resource pressure.
+  - name: Logs
+    description: Live log tail over WebSocket.
+  - name: Checks
+    description: Uptime checks, their results and uptime figures.
+  - name: Alerts
+    description: Alert rules, alerts, silences, notification channels and routes.
+  - name: Status pages
+    description: Public status pages and their incidents.
+  - name: Meta
+    description: The API description itself.
+paths:
+  /api/v1/setup/status:
+    get:
+      tags: [Setup]
+      operationId: getSetupStatus
+      summary: Report whether first-run setup is still required
+      security: []
+      responses:
+        "200":
+          description: Setup state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/setup/admin:
+    post:
+      tags: [Setup]
+      operationId: postSetupAdmin
+      summary: Create the first administrator
+      description: Needs the setup token printed by the server at first start. Signs the new administrator in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupAdminRequest"
+      responses:
+        "201":
+          description: Administrator created and signed in.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: postAuthLogin
+      summary: Sign in with email and password
+      description: |
+        When the account has two-factor enabled, the response is a `pending` ticket instead of a
+        session. Send the ticket and a code to `POST /auth/totp/verify`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in, or a second factor is pending.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Session"
+                  - $ref: "#/components/schemas/PendingLogin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: postAuthLogout
+      summary: End the current session
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Session ended; the cookie is cleared.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/ClearSessionCookie"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/totp/verify:
+    post:
+      tags: [Auth]
+      operationId: postAuthTOTPVerify
+      summary: Complete sign-in with a second factor
+      description: The code is a six-digit TOTP or an unused recovery code. Recovery codes are returned only when a session is issued by enrolment.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPVerifyRequest"
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/totp/enrol:
+    post:
+      tags: [Auth]
+      operationId: postAuthTOTPEnrol
+      summary: Start two-factor enrolment during sign-in
+      description: Used when the account must enrol before it can finish signing in. The ticket comes from the pending login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPPendingEnrolRequest"
+      responses:
+        "200":
+          description: Secret and provisioning URI for an authenticator app.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrolment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/oidc/status:
+    get:
+      tags: [Auth]
+      operationId: getOIDCStatus
+      summary: Report whether single sign-on is enabled
+      security: []
+      responses:
+        "200":
+          description: Single sign-on state for the sign-in page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCStatus"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/oidc/start:
+    get:
+      tags: [Auth]
+      operationId: getOIDCStart
+      summary: Begin single sign-on
+      description: Redirects the browser to the identity provider with a PKCE challenge and state. Disabled sign-in answers with an error redirect to the login page.
+      security: []
+      responses:
+        "302":
+          description: Redirect to the identity provider.
+          headers:
+            Location:
+              description: The provider's authorisation URL.
+              schema:
+                type: string
+                format: uri
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      operationId: getOIDCCallback
+      summary: Finish single sign-on
+      description: Receives the provider's redirect, checks state and the ID token, then sets the session cookie and redirects to the UI. Failures redirect to the login page with `sso_error` set to a stable code.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: Authorisation code from the provider.
+          schema:
+            type: string
+            maxLength: 2048
+        - name: state
+          in: query
+          required: true
+          description: The state value sent by `start`.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        "302":
+          description: Signed in, or redirected to the login page with `sso_error`.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SessionCookie"
+            Location:
+              description: The UI page to continue to.
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me:
+    get:
+      tags: [Account]
+      operationId: getMe
+      summary: Get the signed-in user and a fresh CSRF token
+      responses:
+        "200":
+          description: The current session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/password:
+    post:
+      tags: [Account]
+      operationId: postMePassword
+      summary: Change my password
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password changed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/security:
+    get:
+      tags: [Account]
+      operationId: getMySecurity
+      summary: Get my two-factor state
+      responses:
+        "200":
+          description: Two-factor state for the signed-in user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MySecurity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/totp/enrol:
+    post:
+      tags: [Account]
+      operationId: postMeTOTPEnrol
+      summary: Start authenticator enrolment
+      description: Returns a secret that stays pending until `confirm` accepts a code from it.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: Secret and provisioning URI.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrolment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/totp/confirm:
+    post:
+      tags: [Account]
+      operationId: postMeTOTPConfirm
+      summary: Confirm authenticator enrolment
+      description: Turns two-factor on and returns the recovery codes once. They cannot be shown again.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPConfirmRequest"
+      responses:
+        "200":
+          description: Two-factor enabled; recovery codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodes"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/totp/disable:
+    post:
+      tags: [Account]
+      operationId: postMeTOTPDisable
+      summary: Turn off two-factor
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPDisableRequest"
+      responses:
+        "204":
+          description: Two-factor disabled.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/sessions:
+    get:
+      tags: [Account]
+      operationId: listMySessions
+      summary: List my sessions
+      responses:
+        "200":
+          description: Active sessions, the current one marked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/sessions/{handle}:
+    parameters:
+      - $ref: "#/components/parameters/SessionHandle"
+    delete:
+      tags: [Account]
+      operationId: revokeMySession
+      summary: Revoke one of my sessions
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/tokens:
+    get:
+      tags: [Account]
+      operationId: listMyTokens
+      summary: List my API tokens
+      description: Token values are never returned after creation.
+      responses:
+        "200":
+          description: Tokens without their secret values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Account]
+      operationId: createMyToken
+      summary: Create an API token
+      description: The plain token is in the response once. Bindings cannot exceed the creator's own access.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: Token created; the value is shown only here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me/tokens/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TokenID"
+    delete:
+      tags: [Account]
+      operationId: revokeMyToken
+      summary: Revoke one of my API tokens
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Token revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users
+      responses:
+        "200":
+          description: All accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    patch:
+      tags: [Users]
+      operationId: updateUser
+      summary: Change a user's name, role or disabled flag
+      description: Only the fields present are changed.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete a user
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: User deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{id}/reset:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    post:
+      tags: [Users]
+      operationId: resetUserPassword
+      summary: Set a new password for a user
+      description: Ends the user's sessions.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: Password reset.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{id}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    get:
+      tags: [Users]
+      operationId: listUserSessions
+      summary: List a user's sessions
+      responses:
+        "200":
+          description: Active sessions of the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{id}/sessions/{handle}:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+      - $ref: "#/components/parameters/SessionHandle"
+    delete:
+      tags: [Users]
+      operationId: revokeUserSession
+      summary: Revoke one of a user's sessions
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/settings/security:
+    get:
+      tags: [Users]
+      operationId: getSecuritySettings
+      summary: Get the server-wide two-factor requirement
+      responses:
+        "200":
+          description: Whether every user must use two-factor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecuritySettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Users]
+      operationId: putSecuritySettings
+      summary: Require or stop requiring two-factor for every user
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecuritySettings"
+      responses:
+        "200":
+          description: Saved setting.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecuritySettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/role-bindings:
+    get:
+      tags: [Role bindings]
+      operationId: listRoleBindings
+      summary: List role bindings
+      responses:
+        "200":
+          description: All bindings. A binding with `invalid` true no longer matches an existing subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleBindingList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Role bindings]
+      operationId: createRoleBinding
+      summary: Grant a role to a subject, optionally scoped
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleBindingRequest"
+      responses:
+        "201":
+          description: Binding created. The Location header names it.
+          headers:
+            Location:
+              description: The binding's path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleBinding"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/role-bindings/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RoleBindingID"
+    delete:
+      tags: [Role bindings]
+      operationId: deleteRoleBinding
+      summary: Remove a role binding
+      description: The last unscoped admin binding cannot be removed (AUTH-RBAC-003).
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Binding removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      operationId: getSettings
+      summary: Get editable server settings
+      responses:
+        "200":
+          description: Current settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Settings]
+      operationId: putSetting
+      summary: Change one editable setting
+      description: Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingUpdate"
+      responses:
+        "200":
+          description: Settings after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/settings/oidc:
+    get:
+      tags: [Settings]
+      operationId: getOIDCSettings
+      summary: Get the single sign-on configuration
+      responses:
+        "200":
+          description: Configuration without the client secret; `client_secret_set` says whether one is stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Settings]
+      operationId: putOIDCSettings
+      summary: Save the single sign-on configuration
+      description: "`client_secret` is write-only. It is stored encrypted and never returned."
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCSettingsInput"
+      responses:
+        "200":
+          description: Saved configuration without the secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Settings]
+      operationId: deleteOIDCSettings
+      summary: Remove the single sign-on configuration
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Configuration removed; sign-in with a password remains.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/telemetry/preview:
+    get:
+      tags: [Settings]
+      operationId: getTelemetryPreview
+      summary: Preview the exact telemetry payload
+      description: Shows what would be sent. Nothing is sent by this call.
+      responses:
+        "200":
+          description: The payload as it would be sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryPayload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/audit:
+    get:
+      tags: [Audit]
+      operationId: searchAudit
+      summary: Search the audit log, newest first
+      parameters:
+        - $ref: "#/components/parameters/AuditActor"
+        - $ref: "#/components/parameters/AuditAction"
+        - $ref: "#/components/parameters/AuditTargetType"
+        - $ref: "#/components/parameters/AuditTargetID"
+        - $ref: "#/components/parameters/AuditResult"
+        - $ref: "#/components/parameters/AuditText"
+        - $ref: "#/components/parameters/AuditFrom"
+        - $ref: "#/components/parameters/AuditTo"
+        - $ref: "#/components/parameters/AuditCursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of entries. Sensitive detail fields are masked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/audit/export:
+    get:
+      tags: [Audit]
+      operationId: exportAudit
+      summary: Export matching audit entries as JSON Lines
+      description: Takes the same filters as search, without paging. Entries stream oldest first; one JSON object per line.
+      parameters:
+        - $ref: "#/components/parameters/AuditActor"
+        - $ref: "#/components/parameters/AuditAction"
+        - $ref: "#/components/parameters/AuditTargetType"
+        - $ref: "#/components/parameters/AuditTargetID"
+        - $ref: "#/components/parameters/AuditResult"
+        - $ref: "#/components/parameters/AuditText"
+        - $ref: "#/components/parameters/AuditFrom"
+        - $ref: "#/components/parameters/AuditTo"
+      responses:
+        "200":
+          description: Attachment `nux-audit-<UTC time>.jsonl`.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/AuditEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/audit/verify:
+    get:
+      tags: [Audit]
+      operationId: verifyAudit
+      summary: Verify the audit hash chain
+      responses:
+        "200":
+          description: Verification result. `ok` false means the chain is broken at `broken_at`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerify"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/agents/tokens:
+    post:
+      tags: [Agents]
+      operationId: createAgentToken
+      summary: Create an agent enrolment token
+      description: The token is shown only in this response.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentTokenRequest"
+      responses:
+        "201":
+          description: Enrolment token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/agents/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/AgentID"
+    post:
+      tags: [Agents]
+      operationId: revokeAgent
+      summary: Revoke an agent's certificate
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Agent revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/hosts:
+    get:
+      tags: [Inventory]
+      operationId: listHosts
+      summary: List hosts
+      parameters:
+        - name: status
+          in: query
+          description: Only hosts with this status.
+          schema:
+            type: string
+            enum: [online, offline]
+        - name: include_gone
+          in: query
+          description: Set to true to include hosts that have gone.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - $ref: "#/components/parameters/Tag"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of hosts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/hosts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ItemID"
+    get:
+      tags: [Inventory]
+      operationId: getHost
+      summary: Get a host
+      responses:
+        "200":
+          description: The host and its current ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Host"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/containers:
+    get:
+      tags: [Inventory]
+      operationId: listContainers
+      summary: List containers
+      parameters:
+        - name: host_id
+          in: query
+          description: Only containers on this host.
+          schema:
+            type: string
+            pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        - name: state
+          in: query
+          description: Only containers in this state, for example running or exited.
+          schema:
+            type: string
+            pattern: "^[a-z]{1,32}$"
+        - name: include_gone
+          in: query
+          description: Set to true to include containers that have gone.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - $ref: "#/components/parameters/Tag"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of containers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/containers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ItemID"
+    get:
+      tags: [Inventory]
+      operationId: getContainer
+      summary: Get a container
+      responses:
+        "200":
+          description: The container and its current ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Container"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/events:
+    get:
+      tags: [Inventory]
+      operationId: streamEvents
+      summary: Stream inventory changes (Server-Sent Events)
+      description: |
+        `text/event-stream`. Each message has `id` (the sequence number), `event` (the event type) and
+        `data` (an InventoryEvent JSON object). A `resync` event means the client missed events and must
+        reload. The stream sends a comment about every 15 seconds and ends when the session ends. Events
+        are filtered by the caller's scope. Reconnects send `retry: 3000`.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events carrying InventoryEvent JSON in `data`.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/items/{type}/{id}/tags:
+    parameters:
+      - $ref: "#/components/parameters/ItemType"
+      - $ref: "#/components/parameters/ItemID"
+    put:
+      tags: [Inventory]
+      operationId: putItemTags
+      summary: Replace the tags of a host or container
+      description: "Tags are `key: value` pairs. Needs `If-Match`."
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagsRequest"
+      responses:
+        "200":
+          description: Updated item with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Host"
+                  - $ref: "#/components/schemas/Container"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/items/{type}/{id}/owner:
+    parameters:
+      - $ref: "#/components/parameters/ItemType"
+      - $ref: "#/components/parameters/ItemID"
+    put:
+      tags: [Inventory]
+      operationId: putItemOwner
+      summary: Set or clear the owner of a host or container
+      description: Needs `If-Match`. Omitting `owner` or sending null leaves it unchanged; an empty string clears it.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerRequest"
+      responses:
+        "200":
+          description: Updated item with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Host"
+                  - $ref: "#/components/schemas/Container"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/search:
+    get:
+      tags: [Search]
+      operationId: searchInventory
+      summary: Search hosts and containers by name, tag or address
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Text to match, at most 64 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: limit
+          in: query
+          description: Maximum hits, from 1 to 50 (default 20).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Ranked hits within the caller's scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/metrics/query:
+    get:
+      tags: [Metrics]
+      operationId: queryMetrics
+      summary: Query a metric series for one host or container
+      parameters:
+        - name: target
+          in: query
+          required: true
+          description: Host or container ID.
+          schema:
+            type: string
+            pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        - name: metric
+          in: query
+          required: true
+          description: Metric name from the catalogue, for example cpu, memory or disk.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          description: Start, as Unix milliseconds or RFC 3339.
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          description: End, as Unix milliseconds or RFC 3339.
+          schema:
+            type: string
+        - name: step
+          in: query
+          description: Seconds per point, from 1 to 86400.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 86400
+        - name: label
+          in: query
+          description: Label filter as name:value. Repeat up to four times.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 4
+            items:
+              type: string
+      responses:
+        "200":
+          description: The series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "500":
+          $ref: "#/components/responses/Internal"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/overview/pressure:
+    get:
+      tags: [Metrics]
+      operationId: getPressure
+      summary: Rank hosts and containers by resource pressure
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Ranked hosts and containers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PressureReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "500":
+          $ref: "#/components/responses/Internal"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/logs/stream:
+    get:
+      tags: [Logs]
+      operationId: streamLogs
+      summary: Tail a container or journal unit (WebSocket)
+      description: |
+        Upgrades to a WebSocket that sends text frames of LogFrame JSON. The server asks the agent to open
+        the source and closes the agent stream when the last viewer leaves. Each log open is audited
+        (`logs.stream`). Without `Upgrade: websocket` the request is refused. A viewer who is out of scope
+        gets 403 before anything reaches the agent.
+      parameters:
+        - name: target
+          in: query
+          required: true
+          description: '`container:<containerID>` or `journal:<hostID>:<unit>`, where unit is a systemd unit name.'
+          schema:
+            type: string
+            maxLength: 256
+        - name: tail
+          in: query
+          description: Recent lines to replay, from 0 to 10000 (default 100).
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+            default: 100
+        - name: filter
+          in: query
+          description: Plain text a line must contain, up to 256 characters.
+          schema:
+            type: string
+            maxLength: 256
+      responses:
+        "101":
+          description: Switching Protocols. Frames are LogFrame objects.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogFrame"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/checks:
+    get:
+      tags: [Checks]
+      operationId: listChecks
+      summary: List uptime checks with their status
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of checks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Checks]
+      operationId: createCheck
+      summary: Create an uptime check
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckRequest"
+      responses:
+        "201":
+          description: Check created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The check's path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/checks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CheckID"
+    get:
+      tags: [Checks]
+      operationId: getCheck
+      summary: Get an uptime check
+      responses:
+        "200":
+          description: The check with its ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Checks]
+      operationId: updateCheck
+      summary: Replace an uptime check
+      description: Needs `If-Match`. A fetched document can be sent back as it is; its `status` is ignored.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckRequest"
+      responses:
+        "200":
+          description: Updated check with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Checks]
+      operationId: deleteCheck
+      summary: Delete an uptime check
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Check deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/checks/{id}/run:
+    parameters:
+      - $ref: "#/components/parameters/CheckID"
+    post:
+      tags: [Checks]
+      operationId: runCheck
+      summary: Run a check now
+      description: Waits for the result. Too many runs in a short time answer 429 with `Retry-After`.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: The result of the run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Too many runs. `Retry-After` gives seconds to wait.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/checks/{id}/results:
+    parameters:
+      - $ref: "#/components/parameters/CheckID"
+    get:
+      tags: [Checks]
+      operationId: listCheckResults
+      summary: List a check's recorded runs, newest first
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResultPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/checks/{id}/uptime:
+    parameters:
+      - $ref: "#/components/parameters/CheckID"
+    get:
+      tags: [Checks]
+      operationId: getCheckUptime
+      summary: Get uptime percentages for a check
+      responses:
+        "200":
+          description: Uptime over 24 hours, 7, 30 and 90 days; null where there is no data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Uptime"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/rules:
+    get:
+      tags: [Alerts]
+      operationId: listRules
+      summary: List alert rules
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RulePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Alerts]
+      operationId: createRule
+      summary: Create an alert rule
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleRequest"
+      responses:
+        "201":
+          description: Rule created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The rule's path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RuleID"
+    get:
+      tags: [Alerts]
+      operationId: getRule
+      summary: Get an alert rule
+      responses:
+        "200":
+          description: The rule with its ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Alerts]
+      operationId: updateRule
+      summary: Replace an alert rule
+      description: Needs `If-Match`.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleRequest"
+      responses:
+        "200":
+          description: Updated rule with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Alerts]
+      operationId: deleteRule
+      summary: Delete an alert rule
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Rule deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: List alerts
+      parameters:
+        - name: state
+          in: query
+          description: Only alerts in this state.
+          schema:
+            type: string
+            enum: [open, acked, resolved]
+        - name: severity
+          in: query
+          description: Only alerts with this severity.
+          schema:
+            type: string
+            enum: [info, warning, critical]
+        - name: item_id
+          in: query
+          description: Only alerts about this host, container or check.
+          schema:
+            type: string
+        - name: rule_id
+          in: query
+          description: Only alerts from this rule.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of alerts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alerts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AlertID"
+    get:
+      tags: [Alerts]
+      operationId: getAlert
+      summary: Get an alert
+      responses:
+        "200":
+          description: The alert.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alerts/{id}/ack:
+    parameters:
+      - $ref: "#/components/parameters/AlertID"
+    post:
+      tags: [Alerts]
+      operationId: ackAlert
+      summary: Acknowledge an alert
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: The acknowledged alert.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/silences:
+    get:
+      tags: [Alerts]
+      operationId: listSilences
+      summary: List silences
+      parameters:
+        - name: active
+          in: query
+          description: Set to true for silences in force now.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of silences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SilencePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Alerts]
+      operationId: createSilence
+      summary: Create a silence or maintenance window
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SilenceRequest"
+      responses:
+        "201":
+          description: Silence created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Silence"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/silences/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SilenceID"
+    delete:
+      tags: [Alerts]
+      operationId: deleteSilence
+      summary: End a silence early
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Silence removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/channels:
+    get:
+      tags: [Alerts]
+      operationId: listChannels
+      summary: List notification channels
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of channels. Secrets inside `config` are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Alerts]
+      operationId: createChannel
+      summary: Create a notification channel
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelRequest"
+      responses:
+        "201":
+          description: Channel created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The channel's path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/channels/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ChannelID"
+    get:
+      tags: [Alerts]
+      operationId: getChannel
+      summary: Get a notification channel
+      responses:
+        "200":
+          description: The channel with its ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Alerts]
+      operationId: updateChannel
+      summary: Replace a notification channel
+      description: Needs `If-Match`. Omitted secrets keep their stored value.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelRequest"
+      responses:
+        "200":
+          description: Updated channel with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Alerts]
+      operationId: deleteChannel
+      summary: Delete a notification channel
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Channel deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/channels/{id}/test:
+    parameters:
+      - $ref: "#/components/parameters/ChannelID"
+    post:
+      tags: [Alerts]
+      operationId: testChannel
+      summary: Send a test notification through a channel
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: Test sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OK"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/routes:
+    get:
+      tags: [Alerts]
+      operationId: getRoutes
+      summary: Get the routing table
+      responses:
+        "200":
+          description: The routes and their ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutesDocument"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Alerts]
+      operationId: putRoutes
+      summary: Replace the routing table
+      description: Needs `If-Match` with the ETag from `GET /routes`.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutesDocument"
+      responses:
+        "200":
+          description: Saved routes and their new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutesDocument"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages:
+    get:
+      tags: [Status pages]
+      operationId: listStatusPages
+      summary: List status pages
+      responses:
+        "200":
+          description: All status pages.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusPageList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Status pages]
+      operationId: createStatusPage
+      summary: Create a status page
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusPageRequest"
+      responses:
+        "201":
+          description: Status page created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The page's path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/StatusPageID"
+    get:
+      tags: [Status pages]
+      operationId: getStatusPage
+      summary: Get a status page
+      responses:
+        "200":
+          description: The page with its ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Status pages]
+      operationId: updateStatusPage
+      summary: Replace a status page
+      description: Needs `If-Match`.
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusPageRequest"
+      responses:
+        "200":
+          description: Updated page with a new ETag.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Status pages]
+      operationId: deleteStatusPage
+      summary: Delete a status page
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Page deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages/{id}/incidents:
+    parameters:
+      - $ref: "#/components/parameters/StatusPageID"
+    get:
+      tags: [Status pages]
+      operationId: listIncidents
+      summary: List a status page's incidents
+      responses:
+        "200":
+          description: All incidents of the page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Status pages]
+      operationId: createIncident
+      summary: Open an incident on a status page
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IncidentRequest"
+      responses:
+        "201":
+          description: Incident opened.
+          headers:
+            Location:
+              description: The incidents collection path.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages/{id}/incidents/{incidentId}:
+    parameters:
+      - $ref: "#/components/parameters/StatusPageID"
+      - $ref: "#/components/parameters/IncidentID"
+    delete:
+      tags: [Status pages]
+      operationId: deleteIncident
+      summary: Delete an incident
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Incident deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages/{id}/incidents/{incidentId}/updates:
+    parameters:
+      - $ref: "#/components/parameters/StatusPageID"
+      - $ref: "#/components/parameters/IncidentID"
+    post:
+      tags: [Status pages]
+      operationId: addIncidentUpdate
+      summary: Post an update to an incident
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IncidentUpdateRequest"
+      responses:
+        "200":
+          description: Incident with the new update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/status-pages/{id}/incidents/{incidentId}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/StatusPageID"
+      - $ref: "#/components/parameters/IncidentID"
+    post:
+      tags: [Status pages]
+      operationId: resolveIncident
+      summary: Resolve an incident
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveRequest"
+      responses:
+        "200":
+          description: Resolved incident.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/openapi.yaml:
+    get:
+      tags: [Meta]
+      operationId: getOpenAPI
+      summary: Get this API description
+      description: The document you are reading, as YAML. Any signed-in viewer may read it.
+      responses:
+        "200":
+          description: OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-nux_session
+      description: Set by sign-in. Cookie requests that change state also send the CSRF token.
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: A personal API token from `POST /me/tokens`. Scoped like the user who created it.
+
+  headers:
+    SessionCookie:
+      description: HttpOnly, Secure, SameSite=Strict session cookie.
+      schema:
+        type: string
+    ClearSessionCookie:
+      description: Expires the session cookie.
+      schema:
+        type: string
+    ETag:
+      description: Version of the object. Send it back as If-Match on a write.
+      schema:
+        type: string
+
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required on writes that use the session cookie; the token comes from `POST /auth/login`, `GET /me`. Bearer requests do not need it.
+      schema:
+        type: string
+        maxLength: 256
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: ETag from the last read. 428 when missing, 412 when stale.
+      schema:
+        type: string
+        maxLength: 128
+    Limit:
+      name: limit
+      in: query
+      description: Page size, from 1 to 500 (default 50).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor; pass the previous `next_cursor` back. Absent for the first page.
+      schema:
+        type: string
+        maxLength: 64
+    Tag:
+      name: tag
+      in: query
+      description: Tag selector `key` or `key:value`, repeatable, at most 10.
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 10
+        items:
+          type: string
+          maxLength: 128
+    ItemType:
+      name: type
+      in: path
+      required: true
+      description: Kind of inventory item.
+      schema:
+        type: string
+        enum: [hosts, containers]
+    ItemID:
+      name: id
+      in: path
+      required: true
+      description: Host or container ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    UserID:
+      name: id
+      in: path
+      required: true
+      description: User ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    SessionHandle:
+      name: handle
+      in: path
+      required: true
+      description: Session handle from a session list.
+      schema:
+        type: string
+    TokenID:
+      name: id
+      in: path
+      required: true
+      description: API token ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    RoleBindingID:
+      name: id
+      in: path
+      required: true
+      description: Role binding ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    AgentID:
+      name: id
+      in: path
+      required: true
+      description: Agent ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    CheckID:
+      name: id
+      in: path
+      required: true
+      description: Check ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    RuleID:
+      name: id
+      in: path
+      required: true
+      description: Alert rule ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    AlertID:
+      name: id
+      in: path
+      required: true
+      description: Alert ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    SilenceID:
+      name: id
+      in: path
+      required: true
+      description: Silence ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    ChannelID:
+      name: id
+      in: path
+      required: true
+      description: Notification channel ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    StatusPageID:
+      name: id
+      in: path
+      required: true
+      description: Status page ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    IncidentID:
+      name: incidentId
+      in: path
+      required: true
+      description: Incident ID.
+      schema:
+        type: string
+        pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+    AuditActor:
+      name: actor
+      in: query
+      description: Actor ID.
+      schema:
+        type: string
+        maxLength: 256
+    AuditAction:
+      name: action
+      in: query
+      description: Action name prefix, for example `checks.`.
+      schema:
+        type: string
+        maxLength: 256
+    AuditTargetType:
+      name: target_type
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+    AuditTargetID:
+      name: target_id
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+    AuditResult:
+      name: result
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+    AuditText:
+      name: q
+      in: query
+      description: Text to find in the entry.
+      schema:
+        type: string
+        maxLength: 256
+    AuditFrom:
+      name: from
+      in: query
+      description: Earliest time, RFC 3339.
+      schema:
+        type: string
+        format: date-time
+    AuditTo:
+      name: to
+      in: query
+      description: Latest time, RFC 3339.
+      schema:
+        type: string
+        format: date-time
+    AuditCursor:
+      name: cursor
+      in: query
+      description: The next_cursor of the previous page, which is the ID of its last entry.
+      schema:
+        type: string
+        pattern: "^[0-9]{1,19}$"
+
+  responses:
+    Error:
+      description: Error in the shared shape. `code` is stable and documented in `internal/errcode/codes.go`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: No valid session or token, or the token is expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Signed in, but the policy denies the action (or the CSRF token is missing or wrong).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found, or outside the caller's scope (indistinguishable on purpose).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: The request conflicts with current state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Invalid:
+      description: A field failed validation; `field` and `hint` say which and how to fix it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PreconditionFailed:
+      description: The If-Match ETag is stale; reload and retry.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PreconditionRequired:
+      description: If-Match is missing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate limited or locked out. Wait before retrying.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Internal:
+      description: Unexpected server error. The request ID in the server log has the detail.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+    ErrorBody:
+      type: object
+      required: [code, message, hint]
+      properties:
+        code:
+          type: string
+          pattern: "^[A-Z]+(-[A-Z0-9]+)+$"
+          examples: [API-NF-001, AUTH-RBAC-002]
+        message:
+          type: string
+        hint:
+          type: string
+        field:
+          type: string
+          description: The request field at fault, when one is.
+    NullableCursor:
+      type: [string, "null"]
+      maxLength: 64
+      description: Pass back as `cursor` for the next page; null on the last page.
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+    Scope:
+      type: object
+      description: Limits a binding. Empty means every environment and tag set.
+      properties:
+        environments:
+          type: array
+          items:
+            type: string
+        tag_sets:
+          type: array
+          description: Each inner list is an AND of `key` or `key:value` tags; the outer list is an OR.
+          items:
+            type: array
+            items:
+              type: string
+    Binding:
+      type: object
+      required: [role, scope]
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        scope:
+          $ref: "#/components/schemas/Scope"
+    SetupStatus:
+      type: object
+      required: [setup_required]
+      properties:
+        setup_required:
+          type: boolean
+    SetupAdminRequest:
+      type: object
+      required: [token, name, email, password]
+      properties:
+        token:
+          type: string
+          description: The setup token printed at first start.
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    TOTPVerifyRequest:
+      type: object
+      required: [ticket, code]
+      properties:
+        ticket:
+          type: string
+          description: Ticket from the pending login.
+        code:
+          type: string
+          description: Six-digit TOTP or a recovery code.
+    TOTPPendingEnrolRequest:
+      type: object
+      required: [ticket]
+      properties:
+        ticket:
+          type: string
+    TOTPEnrolment:
+      type: object
+      required: [secret, otpauth_uri]
+      properties:
+        secret:
+          type: string
+        otpauth_uri:
+          type: string
+          description: otpauth:// URI for authenticator apps.
+    PendingLogin:
+      type: object
+      required: [pending]
+      additionalProperties: false
+      properties:
+        pending:
+          type: object
+          required: [ticket, expires_at, enrol_required]
+          properties:
+            ticket:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
+            enrol_required:
+              type: boolean
+              description: True when the account must enrol two-factor before it can sign in.
+    User:
+      type: object
+      required: [id, email, name, roles]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+    Session:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        csrf_token:
+          type: string
+          description: Send as X-CSRF-Token on cookie-authenticated writes.
+        recovery_codes:
+          type: array
+          description: Present only when the session follows two-factor enrolment.
+          items:
+            type: string
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+    MySecurity:
+      type: object
+      required: [totp_enabled, recovery_codes_left, require_2fa]
+      properties:
+        totp_enabled:
+          type: boolean
+        recovery_codes_left:
+          type: integer
+        require_2fa:
+          type: boolean
+    TOTPConfirmRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    TOTPDisableRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+    RecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items:
+            type: string
+    SessionInfo:
+      type: object
+      required: [id, created_at, last_seen_at, expires_at, ip, user_agent, current]
+      properties:
+        id:
+          type: string
+          description: Session handle for DELETE.
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        ip:
+          type: string
+        user_agent:
+          type: string
+        current:
+          type: boolean
+    SessionList:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionInfo"
+    APIToken:
+      type: object
+      required: [id, name, bindings, created_at, expires_at, last_used_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        bindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Binding"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+    TokenList:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIToken"
+    CreateTokenRequest:
+      type: object
+      required: [name, expires_in_days, bindings]
+      properties:
+        name:
+          type: string
+        expires_in_days:
+          type: integer
+        bindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Binding"
+    CreatedToken:
+      type: object
+      required: [token, details]
+      properties:
+        token:
+          type: string
+          description: The plain token. Shown once; store it now.
+        details:
+          $ref: "#/components/schemas/APIToken"
+    Account:
+      type: object
+      required: [id, email, name, role, disabled, totp_enabled, created_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        disabled:
+          type: boolean
+        totp_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    AccountList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/Account"
+    CreateUserRequest:
+      type: object
+      required: [email, name, password, role]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          type: string
+    UpdateUserRequest:
+      type: object
+      description: Send only the fields to change.
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        disabled:
+          type: boolean
+    ResetPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+    SecuritySettings:
+      type: object
+      required: [require_2fa]
+      properties:
+        require_2fa:
+          type: boolean
+    RoleBindingRequest:
+      type: object
+      required: [subject_type, subject, role, scope]
+      properties:
+        subject_type:
+          type: string
+          enum: [user]
+        subject:
+          type: string
+          description: User ID.
+        role:
+          $ref: "#/components/schemas/Role"
+        scope:
+          $ref: "#/components/schemas/Scope"
+    RoleBinding:
+      type: object
+      required: [id, subject_type, subject, role, scope]
+      properties:
+        id:
+          type: string
+        subject_type:
+          type: string
+        subject:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        scope:
+          $ref: "#/components/schemas/Scope"
+        invalid:
+          type: boolean
+          description: True when the subject no longer exists.
+    RoleBindingList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleBinding"
+    Settings:
+      type: object
+      description: Editable settings keyed by name.
+      required: [telemetry.enabled, telemetry.locked, server.public_url, setup.completed]
+      properties:
+        telemetry.enabled:
+          type: boolean
+        telemetry.locked:
+          type: boolean
+          description: True when an environment setting fixes telemetry; the UI then shows it read-only.
+        server.public_url:
+          type: string
+          description: The address agents and browsers use, as scheme and host with an optional port. Empty until set in the setup wizard.
+        setup.completed:
+          type: boolean
+          description: True once the administrator has finished the setup wizard.
+    SettingUpdate:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+          enum: ["telemetry.enabled", "server.public_url", "setup.completed"]
+        value: {}
+    TelemetryPayload:
+      type: object
+      description: Schema version 1 only. Fields are fixed by docs/01-vision.md.
+      required: [schema_version, install_id, report_date, nuxd_version, release_channel, os, arch, distro_family, install_method, storage_backend, agents_bucket, clusters_bucket, checks_bucket, agent_versions, features, notifier_types, server_memory_mb_p95, server_uptime_bucket, restarts_24h, error_codes_24h]
+      properties:
+        schema_version:
+          type: integer
+        install_id:
+          type: string
+        report_date:
+          type: string
+        nuxd_version:
+          type: string
+        release_channel:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        distro_family:
+          type: string
+        install_method:
+          type: string
+        storage_backend:
+          type: string
+        agents_bucket:
+          type: string
+        clusters_bucket:
+          type: string
+        checks_bucket:
+          type: string
+        agent_versions:
+          type: object
+          additionalProperties:
+            type: integer
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+        notifier_types:
+          type: array
+          items:
+            type: string
+        server_memory_mb_p95:
+          type: integer
+        server_uptime_bucket:
+          type: string
+        restarts_24h:
+          type: integer
+        error_codes_24h:
+          type: object
+          additionalProperties:
+            type: integer
+    OIDCStatus:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    OIDCSettings:
+      type: object
+      required: [configured, issuer, client_id, client_secret_set, scopes, groups_claim, allowed_domains, auto_provision, link_existing, redirect_uri]
+      properties:
+        configured:
+          type: boolean
+        issuer:
+          type: string
+        client_id:
+          type: string
+        client_secret_set:
+          type: boolean
+          description: Whether a secret is stored. The secret itself is never returned.
+        scopes:
+          type: array
+          items:
+            type: string
+        groups_claim:
+          type: string
+        allowed_domains:
+          type: array
+          items:
+            type: string
+        auto_provision:
+          type: boolean
+        link_existing:
+          type: boolean
+        redirect_uri:
+          type: string
+          format: uri
+    OIDCSettingsInput:
+      type: object
+      properties:
+        issuer:
+          type: string
+          format: uri
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          format: password
+          writeOnly: true
+          description: Write-only. Omit to keep the stored secret.
+        scopes:
+          type: array
+          items:
+            type: string
+        groups_claim:
+          type: string
+        allowed_domains:
+          type: array
+          items:
+            type: string
+        auto_provision:
+          type: boolean
+        link_existing:
+          type: boolean
+    AuditEntry:
+      type: object
+      required: [id, ts, actor_type, actor_id, action, target_type, target_id, ip, result, prev_hash, hash]
+      properties:
+        id:
+          type: integer
+          format: int64
+        ts:
+          type: string
+          format: date-time
+        actor_type:
+          type: string
+        actor_id:
+          type: string
+        action:
+          type: string
+        target_type:
+          type: string
+        target_id:
+          type: string
+        ip:
+          type: string
+        result:
+          type: string
+          enum: [success, failure]
+        details:
+          type: object
+          description: Context of the action with secrets masked.
+          additionalProperties: true
+        prev_hash:
+          type: string
+        hash:
+          type: string
+    AuditPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    AuditVerify:
+      type: object
+      required: [ok, entries]
+      properties:
+        ok:
+          type: boolean
+        entries:
+          type: integer
+          format: int64
+        broken_at:
+          type: integer
+          format: int64
+        reason:
+          type: string
+        code:
+          type: string
+    AgentTokenRequest:
+      type: object
+      properties:
+        ttl_seconds:
+          type: integer
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    AgentToken:
+      type: object
+      required: [id, token, expires_at]
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+          description: The enrolment token. Shown once.
+        expires_at:
+          type: string
+          format: date-time
+    Port:
+      type: object
+      required: [host_ip, host_port, container_port, protocol]
+      properties:
+        host_ip:
+          type: string
+        host_port:
+          type: integer
+        container_port:
+          type: integer
+        protocol:
+          type: string
+    Host:
+      type: object
+      required: [id, agent_id, hostname, os, distro, kernel, arch, cpu_count, memory_bytes, facts, owner, tags, etag, status, first_seen_at, last_seen_at]
+      properties:
+        id:
+          type: string
+        agent_id:
+          type: string
+        hostname:
+          type: string
+        os:
+          type: string
+        distro:
+          type: string
+        kernel:
+          type: string
+        arch:
+          type: string
+        cpu_count:
+          type: integer
+        memory_bytes:
+          type: integer
+          format: int64
+        facts:
+          type: object
+          additionalProperties:
+            type: string
+        owner:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        etag:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, gone]
+        first_seen_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        gone_at:
+          type: [string, "null"]
+          format: date-time
+    Container:
+      type: object
+      required: [id, host_id, runtime, runtime_id, name, image, state, ports, labels, owner, tags, etag, restart_count]
+      properties:
+        id:
+          type: string
+        host_id:
+          type: string
+        runtime:
+          type: string
+        runtime_id:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+        state:
+          type: string
+        ports:
+          type: array
+          items:
+            $ref: "#/components/schemas/Port"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        owner:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        etag:
+          type: string
+        restart_count:
+          type: integer
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        gone_at:
+          type: [string, "null"]
+          format: date-time
+    HostPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Host"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    ContainerPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Container"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    InventoryEvent:
+      type: object
+      description: The data of one event. The SSE `id` line carries the sequence number.
+      required: [type, at]
+      properties:
+        type:
+          type: string
+          enum: [host.created, host.updated, container.created, container.updated, container.removed, resync]
+        at:
+          type: string
+          format: date-time
+        item:
+          description: The changed Host or Container; absent for resync.
+          oneOf:
+            - $ref: "#/components/schemas/Host"
+            - $ref: "#/components/schemas/Container"
+    TagsRequest:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+    OwnerRequest:
+      type: object
+      properties:
+        owner:
+          type: [string, "null"]
+          description: Omit or null to leave the owner unchanged; empty string to clear it.
+    SearchHit:
+      type: object
+      required: [type, id, name, status, match, detail]
+      properties:
+        type:
+          type: string
+          enum: [host, container]
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        host:
+          type: string
+        match:
+          type: string
+          enum: [name, tag, ip]
+        detail:
+          type: string
+    SearchResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+    MetricsSeries:
+      type: object
+      required: [metric, labels, points]
+      properties:
+        metric:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        points:
+          type: array
+          description: Each point is [unix milliseconds, value].
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: number
+    MetricsResult:
+      type: object
+      required: [resolution, kind, unit, step_seconds, from, to, series]
+      properties:
+        resolution:
+          type: string
+        kind:
+          type: string
+        unit:
+          type: string
+        step_seconds:
+          type: integer
+          format: int64
+        from:
+          type: integer
+          format: int64
+        to:
+          type: integer
+          format: int64
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsSeries"
+    Pressure:
+      type: object
+      required: [id, name, cpu_percent, memory_percent, disk_percent, score, rank]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        host_id:
+          type: string
+        cpu_percent:
+          type: [number, "null"]
+        memory_percent:
+          type: [number, "null"]
+        disk_percent:
+          type: [number, "null"]
+        score:
+          type: [number, "null"]
+          description: The highest of the three percentages.
+        rank:
+          type: object
+          description: 1-based position by each dimension, worst first.
+          additionalProperties:
+            type: integer
+    PressureReport:
+      type: object
+      required: [generated_at, window_seconds, hosts, containers]
+      properties:
+        generated_at:
+          type: integer
+          format: int64
+          description: Unix milliseconds.
+        window_seconds:
+          type: integer
+        hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pressure"
+        containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pressure"
+    LogFrame:
+      description: One WebSocket text frame. `type` decides the shape.
+      oneOf:
+        - $ref: "#/components/schemas/LogLine"
+        - $ref: "#/components/schemas/LogNotice"
+        - $ref: "#/components/schemas/LogEnd"
+    LogLine:
+      type: object
+      required: [type, ts, stream, text]
+      properties:
+        type:
+          type: string
+          enum: [line]
+        ts:
+          type: integer
+          format: int64
+          description: Unix milliseconds.
+        stream:
+          type: string
+          enum: [stdout, stderr, journal]
+        text:
+          type: string
+    LogNotice:
+      type: object
+      required: [type, message]
+      properties:
+        type:
+          type: string
+          enum: [notice]
+        code:
+          type: string
+        message:
+          type: string
+        dropped:
+          type: integer
+          description: Lines lost because the viewer was too slow.
+    LogEnd:
+      type: object
+      required: [type, reason]
+      properties:
+        type:
+          type: string
+          enum: [end]
+        reason:
+          type: string
+        code:
+          type: string
+    CheckStatus:
+      type: object
+      required: [state, since, last_checked, last_latency_ms, last_error_code, last_detail]
+      properties:
+        state:
+          type: string
+          enum: [up, down, unknown]
+        since:
+          type: [string, "null"]
+          format: date-time
+        last_checked:
+          type: [string, "null"]
+          format: date-time
+        last_latency_ms:
+          type: [integer, "null"]
+          format: int64
+        last_error_code:
+          type: string
+        last_detail:
+          type: string
+    CheckRequest:
+      type: object
+      description: A check as the API receives it. Send `status` back unchanged if you fetched the document, or omit it.
+      required: [name, type, runner, interval_s, timeout_s, retries, enabled]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [http, tcp, dns, tls, ping]
+        runner:
+          type: string
+          description: Where the check runs; `server` for checks run by nuxd.
+        interval_s:
+          type: integer
+        timeout_s:
+          type: integer
+        retries:
+          type: integer
+          maximum: 5
+        enabled:
+          type: boolean
+        allow_private:
+          type: boolean
+          description: Permit private and loopback addresses. Off by default (SSRF guard).
+        http:
+          $ref: "#/components/schemas/HTTPConfig"
+        tcp:
+          $ref: "#/components/schemas/TCPConfig"
+        dns:
+          $ref: "#/components/schemas/DNSConfig"
+        tls:
+          $ref: "#/components/schemas/TLSConfig"
+        ping:
+          $ref: "#/components/schemas/PingConfig"
+        status:
+          $ref: "#/components/schemas/CheckStatus"
+    HTTPConfig:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+        headers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckHeader"
+        body:
+          type: string
+        auth:
+          $ref: "#/components/schemas/CheckAuth"
+        expected_status:
+          type: array
+          items:
+            type: integer
+        keyword:
+          type: string
+        json:
+          type: object
+          required: [path, op]
+          properties:
+            path:
+              type: string
+            op:
+              type: string
+              enum: [exists, equals]
+            value:
+              type: string
+        verify_tls:
+          type: boolean
+        max_redirects:
+          type: integer
+        max_body_bytes:
+          type: integer
+    CheckHeader:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        secret:
+          type: boolean
+        secret_value:
+          $ref: "#/components/schemas/SecretInput"
+    CheckAuth:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [none, basic, bearer]
+        username:
+          type: string
+        password:
+          $ref: "#/components/schemas/SecretInput"
+        token:
+          $ref: "#/components/schemas/SecretInput"
+    SecretInput:
+      description: |
+        Write-only. A string sets or replaces the value, an empty string clears it, null or `{"set": true}`
+        keeps the stored value. Responses only ever return `{"set": true|false}`.
+      oneOf:
+        - type: string
+        - type: object
+          required: [set]
+          properties:
+            set:
+              type: boolean
+    TCPConfig:
+      type: object
+      required: [host, port]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+    DNSConfig:
+      type: object
+      required: [name, record_type]
+      properties:
+        name:
+          type: string
+        record_type:
+          type: string
+        resolver:
+          type: string
+        expected:
+          type: array
+          items:
+            type: string
+    TLSConfig:
+      type: object
+      required: [host]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        server_name:
+          type: string
+        warn_days:
+          type: integer
+        verify_chain:
+          type: boolean
+    PingConfig:
+      type: object
+      required: [host]
+      properties:
+        host:
+          type: string
+        count:
+          type: integer
+    CheckView:
+      type: object
+      description: A check with its status.
+      required: [id, name, type, runner, interval_s, timeout_s, retries, enabled, allow_private, created_by, updated_by, created_at, updated_at, status]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [http, tcp, dns, tls, ping]
+        runner:
+          type: string
+        interval_s:
+          type: integer
+        timeout_s:
+          type: integer
+        retries:
+          type: integer
+        enabled:
+          type: boolean
+        allow_private:
+          type: boolean
+        http:
+          $ref: "#/components/schemas/HTTPConfig"
+        tcp:
+          $ref: "#/components/schemas/TCPConfig"
+        dns:
+          $ref: "#/components/schemas/DNSConfig"
+        tls:
+          $ref: "#/components/schemas/TLSConfig"
+        ping:
+          $ref: "#/components/schemas/PingConfig"
+        created_by:
+          type: string
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/CheckStatus"
+    CheckPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckView"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    CheckResult:
+      type: object
+      required: [ts, status, latency_ms, error_code, detail]
+      properties:
+        ts:
+          type: string
+          format: date-time
+        status:
+          type: string
+        latency_ms:
+          type: integer
+          format: int64
+        error_code:
+          type: string
+        detail:
+          type: string
+    CheckResultPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckResult"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    Uptime:
+      type: object
+      required: ["24h", "7d", "30d", "90d"]
+      properties:
+        "24h":
+          type: [number, "null"]
+        "7d":
+          type: [number, "null"]
+        "30d":
+          type: [number, "null"]
+        "90d":
+          type: [number, "null"]
+    Selector:
+      type: object
+      description: Narrows what a rule, route or silence applies to. Every non-empty field must match.
+      properties:
+        tags:
+          type: array
+          items:
+            type: string
+          description: "`key` or `key:value`; all must be present."
+        ids:
+          type: array
+          items:
+            type: string
+        severity:
+          type: array
+          items:
+            type: string
+            enum: [info, warning, critical]
+        kinds:
+          type: array
+          items:
+            type: string
+    RuleRequest:
+      type: object
+      required: [name, kind, severity, enabled, selector]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [check_down, host_offline, container_stopped, metric_threshold, tls_expiring]
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        enabled:
+          type: boolean
+        selector:
+          $ref: "#/components/schemas/Selector"
+        params:
+          type: object
+          description: Kind-specific parameters, for example for_s, or metric and threshold for metric_threshold.
+          additionalProperties: true
+    Rule:
+      allOf:
+        - $ref: "#/components/schemas/RuleRequest"
+        - type: object
+          required: [id, created_by, updated_by, created_at, updated_at]
+          properties:
+            id:
+              type: string
+            created_by:
+              type: string
+            updated_by:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+    RulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rule"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    Alert:
+      type: object
+      required: [id, rule_id, rule_name, kind, severity, item_type, item_id, item_name, summary, link, state, opened_at, flap_count]
+      properties:
+        id:
+          type: string
+        rule_id:
+          type: string
+        rule_name:
+          type: string
+        kind:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        item_type:
+          type: string
+        item_id:
+          type: string
+        item_name:
+          type: string
+        summary:
+          type: string
+        link:
+          type: string
+        state:
+          type: string
+          enum: [open, acked, resolved]
+        opened_at:
+          type: string
+          format: date-time
+        acked_by:
+          type: string
+        acked_at:
+          type: [string, "null"]
+          format: date-time
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+        resolve_reason:
+          type: string
+        flap_count:
+          type: integer
+        last_notified_at:
+          type: [string, "null"]
+          format: date-time
+    AlertPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    SilenceRequest:
+      type: object
+      required: [kind, selector, starts_at, ends_at, reason]
+      properties:
+        kind:
+          type: string
+          enum: [silence, maintenance]
+        selector:
+          $ref: "#/components/schemas/Selector"
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+    Silence:
+      allOf:
+        - $ref: "#/components/schemas/SilenceRequest"
+        - type: object
+          required: [id, created_by, created_at, state]
+          properties:
+            id:
+              type: string
+            created_by:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            state:
+              type: string
+              enum: [scheduled, active, expired]
+    SilencePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Silence"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    ChannelRequest:
+      type: object
+      required: [name, type, enabled, config]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [smtp, slack, teams, discord, telegram, webhook]
+        enabled:
+          type: boolean
+        allow_private:
+          type: boolean
+        config:
+          type: object
+          description: Type-specific settings. Secret fields are write-only.
+          additionalProperties: true
+    Channel:
+      allOf:
+        - $ref: "#/components/schemas/ChannelRequest"
+        - type: object
+          required: [id, last_status, created_by, updated_by, created_at, updated_at]
+          properties:
+            id:
+              type: string
+            last_status:
+              type: string
+            last_error_code:
+              type: string
+            last_sent_at:
+              type: [string, "null"]
+              format: date-time
+            created_by:
+              type: string
+            updated_by:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+    ChannelPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
+        next_cursor:
+          $ref: "#/components/schemas/NullableCursor"
+    Route:
+      type: object
+      required: [selector, channel_id, continue]
+      properties:
+        id:
+          type: string
+        selector:
+          $ref: "#/components/schemas/Selector"
+        channel_id:
+          type: string
+        continue:
+          type: boolean
+          description: Keep matching later routes after this one.
+    RoutesDocument:
+      type: object
+      required: [routes]
+      properties:
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Route"
+    OK:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+    StatusPageComponent:
+      type: object
+      required: [id, name, check_ids]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        check_ids:
+          type: array
+          items:
+            type: string
+    StatusPageRequest:
+      type: object
+      required: [slug, title, description, published, components]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        title:
+          type: string
+        description:
+          type: string
+        published:
+          type: boolean
+        components:
+          type: array
+          items:
+            type: object
+            required: [name, check_ids]
+            properties:
+              id:
+                type: string
+                description: Ignored on input; present so a fetched page can be sent back.
+              name:
+                type: string
+              check_ids:
+                type: array
+                items:
+                  type: string
+    StatusPage:
+      type: object
+      required: [id, slug, title, description, published, components, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        published:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusPageComponent"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    StatusPageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusPage"
+    IncidentRequest:
+      type: object
+      required: [title, body, status, impact]
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [investigating, identified, monitoring, resolved]
+        impact:
+          type: string
+          enum: [none, minor, major]
+    IncidentUpdateRequest:
+      type: object
+      required: [status, body]
+      properties:
+        status:
+          type: string
+          enum: [investigating, identified, monitoring, resolved]
+        body:
+          type: string
+        impact:
+          type: string
+          enum: [none, minor, major]
+    ResolveRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+    IncidentUpdate:
+      type: object
+      required: [status, body, created_by, at]
+      properties:
+        status:
+          type: string
+        body:
+          type: string
+        created_by:
+          type: string
+        at:
+          type: string
+          format: date-time
+    Incident:
+      type: object
+      required: [id, page_id, title, body, status, impact, created_by, created_at, updated_at, updates]
+      properties:
+        id:
+          type: string
+        page_id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [investigating, identified, monitoring, resolved]
+        impact:
+          type: string
+          enum: [none, minor, major]
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentUpdate"
+    IncidentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Incident"

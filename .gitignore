@@ -13,3 +13,6 @@ CLAUDE.md
 .env.*
 *.key
 *.pem
+/nuxd
+/nux
+/load

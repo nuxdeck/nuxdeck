@@ -56,3 +56,20 @@ func TestUnique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestNewIsMonotonicWithinOneMillisecond(t *testing.T) {
+	prev, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5000 {
+		id, err := New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id <= prev {
+			t.Fatalf("%s did not sort after %s", id, prev)
+		}
+		prev = id
+	}
+}

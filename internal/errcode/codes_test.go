@@ -10,7 +10,7 @@ import (
 )
 
 func TestEntriesAreUniqueAndWellFormed(t *testing.T) {
-	format := regexp.MustCompile(`^(SRV|GW|AGT|SKG|INV|MET|LOG|CHK|ALR|STP|AUTH|AUD|API|CLI|TEL)-[A-Z]+-\d{3}$`)
+	format := regexp.MustCompile(`^(SRV|GW|AGT|SKG|INV|MET|LOG|CHK|ALR|STP|AUTH|AUD|API|CLI|TEL|BAK)-[A-Z]+-\d{3}$`)
 	seen := map[Code]bool{}
 	for _, e := range Entries() {
 		if seen[e.Code] {

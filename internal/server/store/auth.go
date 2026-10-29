@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/server/audit"
@@ -46,22 +47,49 @@ func scanUser(r rowScanner) (auth.User, error) {
 	return u, nil
 }
 
-// Roles lists the roles bound directly to a user.
-func (s *Store) Roles(ctx context.Context, userID string) ([]auth.Role, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT role FROM role_bindings WHERE subject_type = 'user' AND subject = ? ORDER BY role`, userID)
+// Bindings lists the role bindings that apply to a user: those bound to the user directly and those
+// bound to a group the user currently belongs to (the Groups hook). A binding with an unreadable
+// scope is skipped, so it grants nothing.
+func (s *Store) Bindings(ctx context.Context, userID string) ([]auth.Binding, error) {
+	subjects := []any{userID}
+	if s.Groups != nil {
+		groups, err := s.Groups(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("look up groups: %w", err)
+		}
+		subjects = append(subjects, anySlice(groups)...)
+	}
+	// Group names and user IDs share one column; the subject_type check keeps them apart.
+	query := `SELECT role, scope_json FROM role_bindings WHERE (subject_type = 'user' AND subject = ?)`
+	if len(subjects) > 1 {
+		query += ` OR (subject_type = 'oidc_group' AND subject IN (?` + strings.Repeat(`,?`, len(subjects)-2) + `))`
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY id`, subjects...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var roles []auth.Role
+	var out []auth.Binding
 	for rows.Next() {
-		var r string
-		if err := rows.Scan(&r); err != nil {
+		var role, scopeJSON string
+		if err := rows.Scan(&role, &scopeJSON); err != nil {
 			return nil, err
 		}
-		roles = append(roles, auth.Role(r))
+		scope, err := auth.ParseScope(scopeJSON)
+		if err != nil {
+			continue
+		}
+		out = append(out, auth.Binding{Role: auth.Role(role), Scope: scope})
 	}
-	return roles, rows.Err()
+	return out, rows.Err()
+}
+
+func anySlice(in []string) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 // CreateAdmin inserts the first account and its admin role, or returns auth.ErrSetupDone if any account exists.

@@ -101,6 +101,59 @@ export const icons = {
     { tag: 'path', attrs: { d: 'M21 12H3' } },
     { tag: 'path', attrs: { d: 'M21 16.5H3' } },
   ] as IconElement[],
+  checkCircle: [
+    { tag: 'circle', attrs: { cx: '12', cy: '12', r: '10' } },
+    { tag: 'path', attrs: { d: 'm9 12 2 2 4-4' } },
+  ] as IconElement[],
+  xCircle: [
+    { tag: 'circle', attrs: { cx: '12', cy: '12', r: '10' } },
+    { tag: 'path', attrs: { d: 'm15 9-6 6' } },
+    { tag: 'path', attrs: { d: 'm9 9 6 6' } },
+  ] as IconElement[],
+  alertTriangle: [
+    {
+      tag: 'path',
+      attrs: {
+        d: 'm21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3',
+      },
+    },
+    { tag: 'path', attrs: { d: 'M12 9v4' } },
+    { tag: 'path', attrs: { d: 'M12 17h.01' } },
+  ] as IconElement[],
+  pauseCircle: [
+    { tag: 'circle', attrs: { cx: '12', cy: '12', r: '10' } },
+    { tag: 'line', attrs: { x1: '10', x2: '10', y1: '15', y2: '9' } },
+    { tag: 'line', attrs: { x1: '14', x2: '14', y1: '15', y2: '9' } },
+  ] as IconElement[],
+  circle: [{ tag: 'circle', attrs: { cx: '12', cy: '12', r: '10' } }] as IconElement[],
+  refresh: [
+    { tag: 'path', attrs: { d: 'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8' } },
+    { tag: 'path', attrs: { d: 'M21 3v5h-5' } },
+    { tag: 'path', attrs: { d: 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16' } },
+    { tag: 'path', attrs: { d: 'M8 16H3v5' } },
+  ] as IconElement[],
+  copy: [
+    { tag: 'rect', attrs: { width: '14', height: '14', x: '8', y: '8', rx: '2', ry: '2' } },
+    { tag: 'path', attrs: { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' } },
+  ] as IconElement[],
+  search: [
+    { tag: 'circle', attrs: { cx: '11', cy: '11', r: '8' } },
+    { tag: 'path', attrs: { d: 'm21 21-4.3-4.3' } },
+  ] as IconElement[],
+  plus: [
+    { tag: 'path', attrs: { d: 'M5 12h14' } },
+    { tag: 'path', attrs: { d: 'M12 5v14' } },
+  ] as IconElement[],
+  box: [
+    {
+      tag: 'path',
+      attrs: {
+        d: 'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
+      },
+    },
+    { tag: 'path', attrs: { d: 'm3.3 7 8.7 5 8.7-5' } },
+    { tag: 'path', attrs: { d: 'M12 22V12' } },
+  ] as IconElement[],
 } as const;
 
 export type IconName = keyof typeof icons;

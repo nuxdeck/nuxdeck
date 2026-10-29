@@ -5,17 +5,28 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/checks"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
+	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
+	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
+	"github.com/nuxdeck/nuxdeck/internal/server/telemetry"
+	"github.com/nuxdeck/nuxdeck/pkg/probe"
 )
 
 const (
@@ -41,11 +52,19 @@ func (l *syncLog) String() string {
 }
 
 type authEnv struct {
-	t     *testing.T
-	h     http.Handler
-	db    *store.Store
-	token *auth.SetupToken
-	logs  *syncLog
+	t       *testing.T
+	h       http.Handler
+	db      *store.Store
+	token   *auth.SetupToken
+	logs    *syncLog
+	revoker *fakeRevoker
+	pki     *pki.Service
+	inv     *inventory.Service
+	checks  *checks.Service
+	pages   *statuspages.Service
+	tel     *telemetry.Service
+	clock   *testClock
+	dir     string
 }
 
 func newAuthEnv(t *testing.T) *authEnv {
@@ -70,9 +89,34 @@ func newAuthEnv(t *testing.T) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ca, err := pki.LoadOrCreateCA(filepath.Join(dir, "pki"), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := &fakeRevoker{}
+	pkiSvc := pki.NewService(db, ca)
+	inv, err := inventory.NewService(db, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, secrets.KeyLen)
+	_, _ = rand.Read(key)
+	box, err := secrets.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := &testClock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	chk := checks.New(checks.Options{
+		DB: db, Secrets: box, Agents: db, Log: log, Inline: true, Clock: clock,
+		Exec: func(context.Context, probe.Policy, probe.Spec) probe.Result {
+			return probe.Result{Status: probe.StatusUp, Latency: 7 * time.Millisecond}
+		},
+	})
+	pages := statuspages.New(statuspages.Options{DB: db, Checks: chk, Log: log, Now: clock.Now})
+	tel := telemetry.New(telemetry.Options{DB: db, Source: telemetry.DBSource{DB: db.DB()}, Log: log, Info: telemetry.Info{Version: "0.1.0"}})
 	return &authEnv{
-		t: t, db: db, token: token, logs: logs,
-		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc}),
+		t: t, tel: tel, dir: dir, db: db, token: token, logs: logs, revoker: rv, pki: pkiSvc, inv: inv, checks: chk, pages: pages, clock: clock,
+		h: Handler(Options{Log: log, Ready: db, UI: uiFS(), Auth: svc, PKI: pkiSvc, GatewayURL: "https://nux.example.com:8444", Revoker: rv, Inventory: inv, Checks: chk, StatusPages: pages, Telemetry: tel}),
 	}
 }
 
@@ -289,7 +333,8 @@ func TestLoginRateLimit(t *testing.T) {
 	e.setup()
 	var last *httptest.ResponseRecorder
 	for i := 0; i < 11; i++ {
-		last = e.do(req{method: "POST", path: "/api/v1/auth/login", body: loginBody(adminEmail, "wrong password here")})
+		// Distinct accounts: repeated failures on one account lock that account first (ACC-7).
+		last = e.do(req{method: "POST", path: "/api/v1/auth/login", body: loginBody(fmt.Sprintf("user%d@example.com", i), "wrong password here")})
 	}
 	if last.Code != http.StatusTooManyRequests || last.Header().Get("Retry-After") == "" || errCode(t, last) != "AUTH-DENY-002" {
 		t.Errorf("11th attempt: %d %q", last.Code, last.Body)
@@ -380,7 +425,7 @@ func TestNothingSecretReachesLogsOrErrors(t *testing.T) {
 
 func TestUnknownAPIRoutesStayJSON404AndNoAuthMeansNoRoutes(t *testing.T) {
 	e := newAuthEnv(t)
-	if rec := e.do(req{method: "GET", path: "/api/v1/hosts"}); rec.Code != http.StatusNotFound || errCode(t, rec) != "API-NF-001" {
+	if rec := e.do(req{method: "GET", path: "/api/v1/no-such-route"}); rec.Code != http.StatusNotFound || errCode(t, rec) != "API-NF-001" {
 		t.Errorf("unknown route: %d %q", rec.Code, rec.Body)
 	}
 	bare := Handler(Options{Log: quiet, Ready: fakeReady{}})

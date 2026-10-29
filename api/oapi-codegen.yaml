@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Settings for oapi-codegen, run by `make api` from the repository root. The generator version is
+# pinned in the Makefile.
+package: client
+output: pkg/client/client.gen.go
+generate:
+  models: true
+  client: true
+output-options:
+  skip-prune: false

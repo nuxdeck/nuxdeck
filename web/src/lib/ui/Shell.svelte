@@ -1,16 +1,30 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { tick, type Component } from 'svelte';
-  import { findSection, router } from '../router.svelte';
+  import { onDestroy, onMount, tick, type Component } from 'svelte';
+  import { inventory } from '../inventory.svelte';
+  import { findSection, resolveRoute, router } from '../router.svelte';
+  import { isPaletteShortcut, palette } from '../palette.svelte';
+  import CommandPalette from '../ui/CommandPalette.svelte';
   import Sidebar from '../ui/Sidebar.svelte';
   import TopBar from '../ui/TopBar.svelte';
-  import AuditLog from '../../routes/AuditLog.svelte';
+  import Account from '../../routes/Account.svelte';
+  import RoleBindings from '../../routes/RoleBindings.svelte';
+  import Users from '../../routes/Users.svelte';
+  import AddHost from '../../routes/AddHost.svelte';
+  import Audit from '../../routes/Audit.svelte';
+  import AlertPage from '../../routes/AlertPage.svelte';
   import Alerts from '../../routes/Alerts.svelte';
+  import CheckEditor from '../../routes/CheckEditor.svelte';
+  import CheckPage from '../../routes/CheckPage.svelte';
   import Checks from '../../routes/Checks.svelte';
+  import ContainerPage from '../../routes/ContainerPage.svelte';
+  import HostPage from '../../routes/HostPage.svelte';
   import Inventory from '../../routes/Inventory.svelte';
   import NotFound from '../../routes/NotFound.svelte';
   import Overview from '../../routes/Overview.svelte';
   import Settings from '../../routes/Settings.svelte';
+  import SetupWizard from '../../routes/SetupWizard.svelte';
+  import SetupBanner from '../onboarding/SetupBanner.svelte';
   import StatusPages from '../../routes/StatusPages.svelte';
 
   const pages: Record<string, Component> = {
@@ -20,7 +34,7 @@
     '/alerts': Alerts,
     '/status-pages': StatusPages,
     '/settings': Settings,
-    '/audit': AuditLog,
+    '/audit': Audit,
   };
 
   const SIDEBAR_ID = 'main-nav';
@@ -40,7 +54,39 @@
   let collapsed = $state(savedCollapsed());
   let first = true;
 
-  const Page = $derived(pages[router.path] ?? NotFound);
+  const route = $derived(resolveRoute(router.path));
+  const Page = $derived(route.kind === 'section' ? (pages[route.path] ?? NotFound) : NotFound);
+  const baseTitle = $derived(
+    route.kind === 'section'
+      ? findSection(route.path)?.title
+      : route.kind === 'alerts'
+        ? 'Alerts'
+        : route.kind === 'alert'
+          ? 'Alert'
+          : route.kind === 'add-host'
+            ? 'Add a host'
+            : route.kind === 'host'
+              ? 'Host'
+              : route.kind === 'container'
+                ? 'Container'
+                : route.kind === 'check-new'
+                  ? 'Add check'
+                  : route.kind === 'check'
+                    ? 'Check'
+                    : route.kind === 'check-edit'
+                      ? 'Edit check'
+                      : route.kind === 'account'
+                        ? 'Account'
+                        : route.kind === 'users'
+                          ? 'Users'
+                          : route.kind === 'setup'
+                            ? 'Set up'
+                            : 'Page not found',
+  );
+
+  // The live inventory belongs to the signed-in shell: it loads once and every page reads it.
+  onMount(() => inventory.start());
+  onDestroy(() => inventory.stop());
 
   function toggleSidebar(): void {
     collapsed = !collapsed;
@@ -54,7 +100,7 @@
   // Client-side navigation keeps the page, so tell assistive technology: update the title and
   // move focus to the new heading. Skipped on first load, where the browser does it.
   $effect(() => {
-    const title = findSection(router.path)?.title ?? 'Page not found';
+    const title = router.titleOverride ?? baseTitle ?? 'Page not found';
     document.title = `${title} · Nux Deck`;
     if (first) {
       first = false;
@@ -75,7 +121,14 @@
   }
 </script>
 
-<svelte:window onclick={interceptLinks} />
+<svelte:window
+  onclick={interceptLinks}
+  onkeydown={(e) => {
+    if (!isPaletteShortcut(e)) return;
+    e.preventDefault(); // Ctrl+K would otherwise focus the browser's search field
+    palette.toggle();
+  }}
+/>
 
 <a class="skip-link" href="#main">Skip to main content</a>
 <div class="shell">
@@ -83,10 +136,38 @@
   <div class="body">
     <Sidebar id={SIDEBAR_ID} {collapsed} />
     <main id="main" tabindex="-1">
-      <Page />
+      {#if route.kind !== 'setup'}<SetupBanner />{/if}
+      {#if route.kind === 'alerts'}
+        {#key route.view}<Alerts view={route.view} />{/key}
+      {:else if route.kind === 'alert'}
+        {#key route.id}<AlertPage id={route.id} />{/key}
+      {:else if route.kind === 'add-host'}
+        <AddHost />
+      {:else if route.kind === 'host'}
+        {#key route.id}<HostPage id={route.id} />{/key}
+      {:else if route.kind === 'container'}
+        {#key route.id}<ContainerPage id={route.id} />{/key}
+      {:else if route.kind === 'check-new'}
+        <CheckEditor />
+      {:else if route.kind === 'check'}
+        {#key route.id}<CheckPage id={route.id} />{/key}
+      {:else if route.kind === 'check-edit'}
+        {#key route.id}<CheckEditor id={route.id} />{/key}
+      {:else if route.kind === 'account'}
+        <Account />
+      {:else if route.kind === 'users'}
+        <Users />
+        <RoleBindings />
+      {:else if route.kind === 'setup'}
+        <SetupWizard />
+      {:else}
+        <Page />
+      {/if}
     </main>
   </div>
 </div>
+
+<CommandPalette />
 
 <style>
   .shell {

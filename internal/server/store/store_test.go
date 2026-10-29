@@ -116,7 +116,7 @@ func TestMigrationGuards(t *testing.T) {
 	}{
 		{"database newer than binary", fstest.MapFS{}, errcode.SRVMig002},
 		{"applied migration edited", edited, errcode.SRVMig003},
-		{"gap in numbering", with(realMigrations(t), "0009_x.sql", "SELECT 1;"), errcode.SRVMig001},
+		{"gap in numbering", with(realMigrations(t), "0099_x.sql", "SELECT 1;"), errcode.SRVMig001},
 		{"bad file name", with(realMigrations(t), "init.sql", "SELECT 1;"), errcode.SRVMig001},
 		{"failing statement", with(realMigrations(t), "0004_bad.sql", "CREATE TABLE t ("), errcode.SRVMig001},
 	}

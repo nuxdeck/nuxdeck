@@ -11,17 +11,34 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	"github.com/nuxdeck/nuxdeck/internal/server/api"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/backup"
+	"github.com/nuxdeck/nuxdeck/internal/server/checks"
 	"github.com/nuxdeck/nuxdeck/internal/server/config"
+	"github.com/nuxdeck/nuxdeck/internal/server/gateway"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 	"github.com/nuxdeck/nuxdeck/internal/server/logging"
+	"github.com/nuxdeck/nuxdeck/internal/server/logs"
+	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
+	"github.com/nuxdeck/nuxdeck/internal/server/pki"
+	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
 	"github.com/nuxdeck/nuxdeck/internal/server/store"
+	"github.com/nuxdeck/nuxdeck/internal/server/store/secrets"
+	"github.com/nuxdeck/nuxdeck/internal/server/telemetry"
 	"github.com/nuxdeck/nuxdeck/internal/server/tlsutil"
+	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 	"github.com/nuxdeck/nuxdeck/web"
 )
 
@@ -42,6 +59,12 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) > 0 && args[0] == "setup-token" {
 		return setupToken(args[1:], stdout, stderr, getenv)
+	}
+	if len(args) > 0 && args[0] == "backup" {
+		return runBackup(ctx, args[1:], stdout, stderr, getenv)
+	}
+	if len(args) > 0 && args[0] == "restore" {
+		return runRestore(ctx, args[1:], stdout, stderr, getenv)
 	}
 	fs := flag.NewFlagSet("nuxd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -77,8 +100,17 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return errcode.Wrap(errcode.SRVCfg002, "logger", err)
 	}
+	// Held for the whole run so backup and restore cannot copy files under a live server (NFR-6).
+	dataLock, err := backup.LockDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dataLock.Release() }()
 
-	db, err := store.Open(ctx, cfg.DataDir, log)
+	db, err := store.OpenWith(ctx, cfg.DataDir, log, backup.PreUpgradeHook(backup.PreUpgradeConfig{
+		DataDir: cfg.DataDir, Keep: cfg.Backup.PreUpgradeKeep, KeyFile: cfg.Secrets.MasterKeyFile,
+		Getenv: getenv, NuxdVersion: version, Log: log,
+	}))
 	if err != nil {
 		return err
 	}
@@ -87,6 +119,13 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 			log.Error("close database", "error", err)
 		}
 	}()
+
+	adoptStoredPublicURL(ctx, db, &cfg, log)
+
+	secretBox, err := openSecrets(ctx, db, cfg, getenv, log)
+	if err != nil {
+		return err
+	}
 
 	hostnames := cfg.TLS.Hostnames
 	if h, err := os.Hostname(); err == nil && h != "" {
@@ -103,30 +142,182 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	if err != nil {
 		return errcode.Wrap(errcode.SRVIO001, "load embedded web UI", err)
 	}
-	svc, err := newAuthService(ctx, db, cfg.DataDir, log)
+	db.UseSecrets(secretBox)
+	hasher, passwords := auth.NewHasher(), auth.NewPasswordPolicy()
+	accounts, err := auth.NewAccounts(auth.AccountsConfig{Repo: db, Hasher: hasher, Passwords: passwords, Log: log})
+	if err != nil {
+		return errcode.Wrap(errcode.APIInt001, "start accounts", err)
+	}
+	svc, err := newAuthService(ctx, db, cfg.DataDir, log, hasher, passwords, accounts)
 	if err != nil {
 		return err
 	}
-	handler := api.Handler(api.Options{Log: log, Ready: db, Version: version, UI: ui, Auth: svc})
+	oidcSvc, err := auth.NewOIDC(auth.OIDCConfig{Repo: db, Service: svc, PublicURL: cfg.Server.PublicURL, Log: log})
+	if err != nil {
+		return errcode.Wrap(errcode.APIInt001, "start single sign-on", err)
+	}
+	db.Groups = db.OIDCGroupsOf
+	ca, err := pki.LoadOrCreateCA(filepath.Join(cfg.DataDir, "pki"), time.Now())
+	if err != nil {
+		return err
+	}
+	gwURL := gatewayURL(cfg.Gateway.PublicURL)
+	pkiSvc := pki.NewService(db, ca)
+	inv, err := inventory.NewService(db, log)
+	if err != nil {
+		return err
+	}
+	mt, err := metrics.Open(metrics.Options{
+		Dir: filepath.Join(cfg.DataDir, "tsdb"), Log: log, Inventory: inv.Index(),
+		FullRetention:        time.Duration(cfg.Metrics.RetentionDays) * 24 * time.Hour,
+		DownsampledRetention: time.Duration(cfg.Metrics.DownsampledRetentionDays) * 24 * time.Hour,
+	})
+	if err != nil {
+		return err
+	}
+	mt.Run(ctx)
+	defer func() {
+		if err := mt.Close(); err != nil {
+			log.Error("close metrics store", "error", err)
+		}
+	}()
+	var gw *gateway.Gateway // set below; the log broker and the check engine send through it
+	checkSvc := checks.New(checks.Options{
+		DB: db, Secrets: secretBox, Agents: db, Log: log, BlockPrivate: cfg.Checks.BlockPrivate, MaxConcurrent: cfg.Checks.MaxConcurrent,
+		Sender: senderFunc(func(agentID string, m *agentv1.ServerMessage) error { return gw.SendToAgent(agentID, m) }),
+	})
+	logBroker := logs.NewBroker(logs.Options{Log: log, Sender: senderFunc(func(agentID string, m *agentv1.ServerMessage) error {
+		return gw.SendToAgent(agentID, m)
+	})})
+	defer logBroker.Close()
+	gw, err = gateway.New(ctx, gateway.Options{
+		Log: log, Repo: db, Enroller: pkiSvc, Renewer: pkiSvc, CA: ca,
+		OnMessage: func(agentID string, m *agentv1.AgentMessage) {
+			inv.HandleMessage(agentID, m)
+			mt.HandleMessage(agentID, m)
+			logBroker.HandleMessage(agentID, m)
+			checkSvc.HandleMessage(agentID, m)
+		}, OnPresence: func(agentID string, online bool) {
+			inv.SetPresence(agentID, online)
+			logBroker.AgentGone(agentID) // a new or lost connection ends the streams of the old one
+			if !online {
+				checkSvc.AgentGone(agentID)
+			}
+		},
+		ServerCert: ca.ServerCertificates(gatewayHosts(gwURL, hostnames)).GetCertificate,
+	})
+	if err != nil {
+		return err
+	}
+	statusSvc := statuspages.New(statuspages.Options{DB: db, Checks: checkSvc, Log: log})
+	statusCtx, stopStatus := context.WithCancel(ctx)
+	statusDone := make(chan struct{})
+	go func() { defer close(statusDone); statusSvc.Run(statusCtx) }()
+	defer func() { stopStatus(); <-statusDone }()
+	telSvc := telemetry.New(telemetry.Options{
+		DB: db, Source: telemetry.DBSource{DB: db.DB(), SSO: ssoConfigured(oidcSvc, log)}, Log: log,
+		Info:   telemetry.Info{Version: version, InstallMethod: getenv("NUX_INSTALL_METHOD")},
+		Locked: strings.EqualFold(getenv("NUX_TELEMETRY"), "off"),
+	})
+	telCtx, stopTel := context.WithCancel(ctx)
+	telDone := make(chan struct{})
+	go func() { defer close(telDone); telSvc.Run(telCtx) }()
+	defer func() { stopTel(); <-telDone }()
+	alertSvc, alertChannels, stopAlerting := startAlerting(ctx, db, secretBox, checkSvc, inv, mt, cfg, log)
+	defer stopAlerting()
+	verifyAuditAtStartup(ctx, db, log)
+	handler := api.Handler(api.Options{
+		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, Accounts: accounts, StatusPages: statusSvc, Telemetry: telSvc,
+		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Checks: checkSvc, Logs: logBroker, Audit: db, Alerting: alertSvc, Channels: alertChannels, RoleBindings: db,
+		OIDC: oidcSvc,
+	})
 	srv, err := api.NewServer(cfg.HTTP, cert, handler, log)
+	if err != nil {
+		return err
+	}
+	gwLn, err := gateway.Listen(cfg.Gateway.Addr)
 	if err != nil {
 		return err
 	}
 
 	log.Info("nuxd started", "version", version, "https_addr", srv.HTTPSAddr(), "redirect_addr", srv.RedirectAddr(), "data_dir", cfg.DataDir)
-	if err := srv.Serve(ctx); err != nil {
+	log.Info("agent gateway listening", "addr", gwLn.Addr().String(), "public_url", gwURL)
+	if err := serveAll(ctx, srv, gw, gwLn, checkSvc); err != nil {
 		return err
 	}
 	log.Info("nuxd stopped")
 	return nil
 }
 
+// openSecrets loads the master key and refuses to continue if a key we just generated
+// meets a database that already holds secrets sealed under some other key.
+func openSecrets(ctx context.Context, db *store.Store, cfg config.Config, getenv func(string) string, log *slog.Logger) (*secrets.Box, error) {
+	key, created, err := secrets.LoadMasterKey(cfg.DataDir, cfg.Secrets.MasterKeyFile, getenv)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key)
+	if created {
+		has, err := secrets.Any(ctx, db.DB())
+		if err != nil {
+			return nil, errcode.Wrap(errcode.SRVIO001, "check for stored secrets", err)
+		}
+		if has {
+			_ = os.Remove(filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+			return nil, errcode.New(errcode.SRVSec001, "the database holds secrets but no master key was found; restore the original key (NUXD_MASTER_KEY, secrets.master_key_file or %s)", filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+		}
+		log.Info("generated a new master key", "file", filepath.Join(cfg.DataDir, secrets.GeneratedKeyFile))
+	}
+	return secrets.New(key)
+}
+
+// senderFunc adapts a function to logs.Sender.
+type senderFunc func(agentID string, m *agentv1.ServerMessage) error
+
+func (f senderFunc) SendToAgent(agentID string, m *agentv1.ServerMessage) error { return f(agentID, m) }
+
+// serveAll runs the web server and the agent gateway; when either stops, so does the other.
+func serveAll(ctx context.Context, srv *api.Server, gw *gateway.Gateway, gwLn net.Listener, chk *checks.Service) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 3)
+	go func() { errs <- srv.Serve(ctx) }()
+	go func() { errs <- gw.Serve(ctx, gwLn) }()
+	go func() { errs <- chk.Run(ctx) }()
+	first := <-errs
+	cancel()
+	return errors.Join(first, <-errs, <-errs)
+}
+
+// gatewayHosts lists the names and addresses the gateway certificate must cover.
+func gatewayHosts(publicURL string, configured []string) []string {
+	hosts := append([]string{"localhost"}, configured...)
+	if u, err := url.Parse(publicURL); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, u.Hostname())
+	}
+	slices.Sort(hosts)
+	return slices.Compact(hosts)
+}
+
+// gatewayURL is the address embedded in enrolment tokens: the configured public
+// URL, or this machine's host name on the agent port.
+func gatewayURL(configured string) string {
+	if configured != "" {
+		return strings.TrimSuffix(configured, "/")
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "localhost"
+	}
+	return "https://" + net.JoinHostPort(host, "8444")
+}
+
 // newAuthService builds the auth module. While no account exists it makes sure
 // a setup token is on disk; the token itself is never logged.
-func newAuthService(ctx context.Context, db *store.Store, dataDir string, log *slog.Logger) (*auth.Service, error) {
+func newAuthService(ctx context.Context, db *store.Store, dataDir string, log *slog.Logger, hasher *auth.Hasher, passwords *auth.PasswordPolicy, accounts *auth.Accounts) (*auth.Service, error) {
 	token := auth.NewSetupToken(dataDir)
 	svc, err := auth.NewService(ctx, auth.Config{
-		Repo: db, Hasher: auth.NewHasher(), Passwords: auth.NewPasswordPolicy(), SetupToken: token, Log: log,
+		Repo: db, Hasher: hasher, Passwords: passwords, SetupToken: token, Log: log, Accounts: accounts,
 	})
 	if err != nil {
 		return nil, errcode.Wrap(errcode.APIInt001, "start auth", err)
@@ -181,4 +372,17 @@ func getenvDefault(getenv func(string) string, key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// ssoConfigured reports whether single sign-on is set up, for the telemetry feature flag. A
+// failed read reports false and is logged; telemetry must not stop on it.
+func ssoConfigured(svc *auth.OIDC, log *slog.Logger) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		on, err := svc.Enabled(ctx)
+		if err != nil {
+			log.Warn("could not read sso settings for telemetry", "error", err)
+			return false
+		}
+		return on
+	}
 }
