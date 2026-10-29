@@ -54,8 +54,8 @@ func TestAuthorize(t *testing.T) {
 		{ActionSearch, roleless, errcode.AuthDeny005},
 		{ActionAgentRevoke, viewer, errcode.AuthDeny005}, // admin-only actions stay out of a viewer's reach
 		{ActionAgentTokenCreate, operator, errcode.AuthDeny005},
-		{"hosts.read", admin, errcode.AuthDeny005}, // unknown actions fail closed, even for an admin
-		{"", admin, errcode.AuthDeny005},
+		{"hosts.read", admin, errcode.AuthRBAC001}, // unknown actions fail closed, even for an admin
+		{"", admin, errcode.AuthRBAC001},
 	}
 	for _, tt := range tests {
 		err := Authorize(tt.who, tt.action)
