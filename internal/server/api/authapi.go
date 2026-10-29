@@ -50,6 +50,8 @@ type userJSON struct {
 type sessionJSON struct {
 	User      userJSON `json:"user"`
 	CSRFToken string   `json:"csrf_token"`
+	// RecoveryCodes are shown once, when the second sign-in step finished a required enrolment.
+	RecoveryCodes []string `json:"recovery_codes,omitempty"`
 }
 
 func roleStrings(roles []auth.Role) []string {
@@ -65,7 +67,12 @@ func roleStrings(roles []auth.Role) []string {
 func (a *authAPI) begin(w http.ResponseWriter, r *http.Request, action auth.Action) (auth.Principal, *auth.Session, bool) {
 	var p auth.Principal
 	var sess *auth.Session
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	if token, present := bearerToken(r); present {
+		var ok bool
+		if p, sess, ok = a.beginToken(w, r, token); !ok {
+			return p, nil, false
+		}
+	} else if c, err := r.Cookie(sessionCookie); err == nil {
 		var aerr error
 		if p, sess, aerr = a.svc.Authenticate(r.Context(), c.Value); aerr != nil {
 			a.fail(w, r, aerr)
@@ -140,8 +147,12 @@ func (a *authAPI) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *authAPI) logout(w http.ResponseWriter, r *http.Request) {
-	_, sess, ok := a.begin(w, r, auth.ActionLogout)
+	p, sess, ok := a.begin(w, r, auth.ActionLogout)
 	if !ok {
+		return
+	}
+	if p.Via == "token" { // a token has no session to end; without this guard Logout would index an empty hash
+		a.fail(w, r, errcode.New(errcode.AuthDeny005, "sign-out needs a browser session"))
 		return
 	}
 	if !sameOrigin(r) || !a.svc.CheckCSRF(*sess, r.Header.Get(csrfHeader)) {
@@ -169,13 +180,23 @@ func (a *authAPI) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *authAPI) respondSignedIn(w http.ResponseWriter, status int, in *auth.SignedIn) {
+	a.respondSignedInCodes(w, status, in, nil)
+}
+
+func (a *authAPI) respondSignedInCodes(w http.ResponseWriter, status int, in *auth.SignedIn, recovery []string) {
+	if in.Pending != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"pending": map[string]any{
+			"ticket": in.Pending.Ticket, "expires_at": in.Pending.ExpiresAt, "enrol_required": in.Pending.EnrolRequired,
+		}})
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: in.Cookie, Path: "/", Expires: in.ExpiresAt,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, status, sessionJSON{
 		User:      userJSON{ID: in.User.ID, Email: in.User.Email, Name: in.User.Name, Roles: roleStrings(in.Roles)},
-		CSRFToken: in.CSRFToken,
+		CSRFToken: in.CSRFToken, RecoveryCodes: recovery,
 	})
 }
 
@@ -250,6 +271,23 @@ func (a *authAPI) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errcode.AuthDeny002:
 		w.Header().Set("Retry-After", strconv.Itoa(300))
 		writeErrorDetail(w, http.StatusTooManyRequests, code, field, hint)
+	case errcode.AuthRBAC001, errcode.AuthRBAC002:
+		writeErrorDetail(w, http.StatusForbidden, code, field, hint)
+	case errcode.AuthRBAC003:
+		writeErrorDetail(w, http.StatusUnprocessableEntity, code, field, hint)
+	case errcode.AuthRBAC004:
+		writeErrorDetail(w, http.StatusNotFound, code, field, hint)
+	case errcode.AuthToken001, errcode.AuthTOTP001, errcode.AuthTOTP002:
+		writeErrorDetail(w, http.StatusUnauthorized, code, field, hint)
+	case errcode.AuthLock001:
+		w.Header().Set("Retry-After", strconv.Itoa(900))
+		writeErrorDetail(w, http.StatusTooManyRequests, code, field, hint)
+	case errcode.AuthUser003, errcode.AuthToken003:
+		writeErrorDetail(w, http.StatusNotFound, code, field, hint)
+	case errcode.AuthUser001, errcode.AuthUser002, errcode.AuthTOTP003:
+		writeErrorDetail(w, http.StatusConflict, code, field, hint)
+	case errcode.AuthToken002:
+		writeErrorDetail(w, http.StatusForbidden, code, field, hint)
 	case errcode.AuthDeny004, errcode.AuthDeny005, errcode.AuthSetup001:
 		writeErrorDetail(w, http.StatusForbidden, code, field, hint)
 	case errcode.AuthSetup002:

@@ -60,7 +60,7 @@ func pageParams(w http.ResponseWriter, r *http.Request) (cursor string, limit in
 }
 
 func (a *checksAPI) list(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionChecksRead); !ok {
+	if _, _, ok := a.beginGlobal(w, r, auth.ActionChecksRead); !ok {
 		return
 	}
 	cursor, limit, ok := pageParams(w, r)
@@ -87,7 +87,7 @@ func (a *checksAPI) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *checksAPI) get(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionChecksRead); !ok {
+	if _, _, ok := a.beginGlobal(w, r, auth.ActionChecksRead); !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -105,7 +105,7 @@ func (a *checksAPI) get(w http.ResponseWriter, r *http.Request) {
 
 // write is the shared head of the changing endpoints: authorise, CSRF and check ID.
 func (a *checksAPI) write(w http.ResponseWriter, r *http.Request, action auth.Action, needID bool) (actor checks.Actor, id string, ok bool) {
-	p, sess, ok := a.begin(w, r, action)
+	p, sess, ok := a.beginGlobal(w, r, action)
 	if !ok {
 		return checks.Actor{}, "", false
 	}
@@ -187,7 +187,7 @@ func (a *checksAPI) run(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *checksAPI) results(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionChecksRead); !ok {
+	if _, _, ok := a.beginGlobal(w, r, auth.ActionChecksRead); !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -214,7 +214,7 @@ func (a *checksAPI) results(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *checksAPI) uptime(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionChecksRead); !ok {
+	if _, _, ok := a.beginGlobal(w, r, auth.ActionChecksRead); !ok {
 		return
 	}
 	id := r.PathValue("id")

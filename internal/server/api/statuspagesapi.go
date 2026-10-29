@@ -45,7 +45,7 @@ func (a *statusPagesAPI) register(mux *http.ServeMux) {
 
 // write is the shared head of the changing endpoints: authorise, CSRF and path IDs.
 func (a *statusPagesAPI) write(w http.ResponseWriter, r *http.Request, needID, needIncident bool) (who statuspages.Actor, id, incident string, ok bool) {
-	p, sess, ok := a.begin(w, r, auth.ActionStatusPagesWrite)
+	p, sess, ok := a.beginGlobal(w, r, auth.ActionStatusPagesWrite)
 	if !ok {
 		return
 	}
@@ -70,7 +70,7 @@ func (a *statusPagesAPI) write(w http.ResponseWriter, r *http.Request, needID, n
 
 // read authorises a viewer and validates the page ID, when the route has one.
 func (a *statusPagesAPI) read(w http.ResponseWriter, r *http.Request, needID bool) (id string, ok bool) {
-	if _, _, ok := a.begin(w, r, auth.ActionStatusPagesRead); !ok {
+	if _, _, ok := a.beginGlobal(w, r, auth.ActionStatusPagesRead); !ok {
 		return "", false
 	}
 	if needID {

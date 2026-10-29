@@ -140,7 +140,7 @@ func newLogsEnv(t *testing.T, tune ...func(*logs.Options)) *logsEnv {
 	}
 	h := Handler(Options{
 		Log: log, Ready: e.db, UI: uiFS(), Auth: svc, PKI: e.pki, GatewayURL: "https://nux.example.com:8444", Revoker: e.revoker,
-		Inventory: e.inv, Logs: le.broker, Audit: le.aud, LogScope: func(ctx context.Context, p auth.Principal, host, ctr string) bool {
+		Inventory: e.inv, Checks: e.checks, StatusPages: e.pages, RoleBindings: e.db, Logs: le.broker, Audit: le.aud, LogScope: func(ctx context.Context, p auth.Principal, host, ctr string) bool {
 			return le.scope == nil || le.scope(ctx, p, host, ctr)
 		},
 	})
@@ -491,5 +491,28 @@ func TestLogsStreamNeedsAnAuditSink(t *testing.T) {
 	h.ServeHTTP(rec, rq)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("without audit = %d", rec.Code)
+	}
+}
+
+// LOG-7: the scope rule is applied again on every keepalive, so a host or container that moves out
+// of the caller's scope ends a stream that is already open.
+func TestLogsStreamEndsWhenScopeIsLost(t *testing.T) {
+	le := newLogsEnv(t)
+	var inScope sync.Mutex
+	allowed := true
+	le.scope = func(context.Context, auth.Principal, string, string) bool {
+		inScope.Lock()
+		defer inScope.Unlock()
+		return allowed
+	}
+	c, _, err := le.dial(t, "target="+le.target(), le.admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inScope.Lock()
+	allowed = false
+	inScope.Unlock()
+	if ev := readEvent(t, c); ev["type"] != "end" {
+		t.Errorf("event = %v; want the stream to end", ev)
 	}
 }

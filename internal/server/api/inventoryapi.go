@@ -87,7 +87,8 @@ func (a *inventoryAPI) listParams(w http.ResponseWriter, r *http.Request) (curso
 }
 
 func (a *inventoryAPI) listHosts(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionInventoryRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionInventoryRead)
+	if !ok {
 		return
 	}
 	cursor, limit, gone, ok := a.listParams(w, r)
@@ -103,11 +104,12 @@ func (a *inventoryAPI) listHosts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, page(a.inv.Index().Hosts(inventory.HostFilter{Status: status, IncludeGone: gone, Tags: tags}, cursor, limit)))
+	writeJSON(w, http.StatusOK, page(a.inv.Index().Hosts(inventory.HostFilter{Status: status, IncludeGone: gone, Tags: tags, Allow: hostAllow(p, auth.ActionInventoryRead)}, cursor, limit)))
 }
 
 func (a *inventoryAPI) listContainers(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionInventoryRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionInventoryRead)
+	if !ok {
 		return
 	}
 	cursor, limit, gone, ok := a.listParams(w, r)
@@ -127,16 +129,17 @@ func (a *inventoryAPI) listContainers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := inventory.ContainerFilter{HostID: q.Get("host_id"), State: q.Get("state"), IncludeGone: gone, Tags: tags}
+	f := inventory.ContainerFilter{HostID: q.Get("host_id"), State: q.Get("state"), IncludeGone: gone, Tags: tags, Allow: containerAllow(p, auth.ActionInventoryRead)}
 	writeJSON(w, http.StatusOK, page(a.inv.Index().Containers(f, cursor, limit)))
 }
 
 func (a *inventoryAPI) getHost(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionInventoryRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionInventoryRead)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
-	if h, found := a.inv.Index().Host(id); found && ulid.MatchString(id) {
+	if h, found := a.inv.Index().Host(id); found && ulid.MatchString(id) && p.Covers(auth.ActionInventoryRead, hostResource(h)) {
 		w.Header().Set("ETag", h.ETag)
 		writeJSON(w, http.StatusOK, h)
 		return
@@ -145,11 +148,12 @@ func (a *inventoryAPI) getHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *inventoryAPI) getContainer(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionInventoryRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionInventoryRead)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
-	if c, found := a.inv.Index().Container(id); found && ulid.MatchString(id) {
+	if c, found := a.inv.Index().Container(id); found && ulid.MatchString(id) && p.Covers(auth.ActionInventoryRead, a.containerRes(c)) {
 		w.Header().Set("ETag", c.ETag)
 		writeJSON(w, http.StatusOK, c)
 		return
@@ -160,7 +164,8 @@ func (a *inventoryAPI) getContainer(w http.ResponseWriter, r *http.Request) {
 // events streams inventory changes as Server-Sent Events. A client reloads through the REST
 // API after connecting and after any `resync` event or reconnect; the stream carries changes only.
 func (a *inventoryAPI) events(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionEventsStream); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionEventsStream)
+	if !ok {
 		return
 	}
 	sub, err := a.inv.Subscribe()
@@ -192,7 +197,6 @@ func (a *inventoryAPI) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, _ := r.Cookie(sessionCookie)
 	tick := time.NewTicker(sseKeepalive)
 	defer tick.Stop()
 	for {
@@ -202,6 +206,9 @@ func (a *inventoryAPI) events(w http.ResponseWriter, r *http.Request) {
 		case ev, ok := <-sub.C:
 			if !ok {
 				return
+			}
+			if !a.eventVisible(p, ev) {
+				continue
 			}
 			body, err := json.Marshal(ev)
 			if err != nil {
@@ -213,15 +220,39 @@ func (a *inventoryAPI) events(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-tick.C:
 			// A long-lived stream must not outlive the session that opened it.
-			if cookie == nil {
+			np, ok := a.reauthenticate(r.Context(), r)
+			if !ok || auth.Authorize(np, auth.ActionEventsStream) != nil {
 				return
 			}
-			if p, _, err := a.svc.Authenticate(r.Context(), cookie.Value); err != nil || !p.Authenticated() {
-				return
-			}
+			p = np // role bindings may have changed since the stream opened
 			if !send(": keepalive\n\n") {
 				return
 			}
 		}
+	}
+}
+
+// containerRes scopes a container by its tags over its host's.
+func (a *inventoryAPI) containerRes(c inventory.Container) auth.Resource {
+	h, _ := a.inv.Index().Host(c.HostID)
+	return containerResource(c, h)
+}
+
+// eventVisible reports whether a live event may reach p (ACC-5): an event carries a host or
+// container, which must be in the caller's scope. A resync names no item and goes to everyone.
+func (a *inventoryAPI) eventVisible(p auth.Principal, ev inventory.Event) bool {
+	switch it := ev.Item.(type) {
+	case nil:
+		return ev.Type == inventory.EventResync
+	case inventory.Host:
+		return p.Covers(auth.ActionEventsStream, hostResource(it))
+	case *inventory.Host:
+		return it != nil && p.Covers(auth.ActionEventsStream, hostResource(*it))
+	case inventory.Container:
+		return p.Covers(auth.ActionEventsStream, a.containerRes(it))
+	case *inventory.Container:
+		return it != nil && p.Covers(auth.ActionEventsStream, a.containerRes(*it))
+	default:
+		return false // fail closed on an item type this filter does not know
 	}
 }

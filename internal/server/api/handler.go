@@ -23,6 +23,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/metrics"
 	"github.com/nuxdeck/nuxdeck/internal/server/pki"
 	"github.com/nuxdeck/nuxdeck/internal/server/statuspages"
+	"github.com/nuxdeck/nuxdeck/internal/server/telemetry"
 )
 
 // Readiness reports whether a dependency is usable.
@@ -64,8 +65,19 @@ type Options struct {
 	// Alerting and Channels serve rules, alerts, silences, channels and routes; both are needed, with Auth.
 	Alerting *alerting.Service
 	Channels *alerting.Channels
+	// AuditLog serves audit search, export and chain verification (admin); it needs Auth. When nil,
+	// Ready is used if it also implements AuditStore, as *store.Store does.
+	AuditLog AuditStore
 	// StatusPages serves the public status pages; with Auth it also enables their admin API.
 	StatusPages *statuspages.Service
+	// Telemetry serves the settings endpoints and the payload preview; it needs Auth.
+	Telemetry *telemetry.Service
+	// RoleBindings enables the role-binding admin API (ACC-4, ACC-5); it needs Auth.
+	RoleBindings RoleBindingStore
+	// Accounts enables user management, sessions, API tokens and two-factor; it needs Auth.
+	Accounts *auth.Accounts
+	// OIDC enables single sign-on and its settings; it needs Auth.
+	OIDC *auth.OIDC
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -87,6 +99,7 @@ func Handler(o Options) http.Handler {
 	if o.Auth != nil {
 		a := &authAPI{svc: o.Auth, log: o.Log}
 		a.register(mux)
+		(&openAPIAPI{authAPI: a}).register(mux)
 		if o.Inventory != nil {
 			(&inventoryAPI{authAPI: a, inv: o.Inventory}).register(mux)
 			if o.Metrics != nil {
@@ -102,8 +115,23 @@ func Handler(o Options) http.Handler {
 		if o.StatusPages != nil {
 			(&statusPagesAPI{authAPI: a, pages: o.StatusPages}).register(mux)
 		}
+		if ss, _ := o.Ready.(settingsStore); o.Telemetry != nil && ss != nil {
+			(&settingsAPI{authAPI: a, tel: o.Telemetry, store: ss}).register(mux)
+		}
 		if o.Alerting != nil && o.Channels != nil {
-			(&alertsAPI{authAPI: a, alerts: o.Alerting, channels: o.Channels}).register(mux)
+			(&alertsAPI{authAPI: a, alerts: o.Alerting, channels: o.Channels, inv: o.Inventory}).register(mux)
+		}
+		if as := auditStoreOf(o); as != nil {
+			(&auditAPI{authAPI: a, store: as}).register(mux)
+		}
+		if o.RoleBindings != nil {
+			(&roleBindingsAPI{authAPI: a, store: o.RoleBindings}).register(mux)
+		}
+		if o.Accounts != nil {
+			(&accountsAPI{authAPI: a, acc: o.Accounts}).register(mux)
+		}
+		if o.OIDC != nil {
+			(&oidcAPI{authAPI: a, oidc: o.OIDC}).register(mux)
 		}
 		if o.PKI != nil {
 			(&agentsAPI{authAPI: a, pki: o.PKI, gatewayURL: o.GatewayURL, revoker: o.Revoker}).register(mux)
@@ -128,6 +156,14 @@ func Handler(o Options) http.Handler {
 	})
 
 	return recoverer(o.Log, withRequestID(securityHeaders(accessLog(o.Log, mux))))
+}
+
+func auditStoreOf(o Options) AuditStore {
+	if o.AuditLog != nil {
+		return o.AuditLog
+	}
+	as, _ := o.Ready.(AuditStore)
+	return as
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

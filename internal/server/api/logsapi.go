@@ -130,6 +130,11 @@ func (a *logsAPI) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errcode.APINF001)
 		return
 	}
+	res := logResource(target, host, container)
+	if err := auth.AuthorizeOn(p, auth.ActionLogsStream, res); err != nil { // LOG-7: per target, before any slot or audit entry
+		a.fail(w, r, err)
+		return
+	}
 	if a.scope != nil && !a.scope(r.Context(), p, host.ID, container.ID) {
 		a.fail(w, r, errcode.New(errcode.AuthDeny005, "logs of host %s are outside the caller's scope", host.ID))
 		return
@@ -180,7 +185,7 @@ func (a *logsAPI) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(wsReadLimit)
-	a.pump(r, conn, watcher, strings.ToLower(filter))
+	a.pump(r, conn, watcher, strings.ToLower(filter), a.streamRecheck(r, target))
 }
 
 // resolve finds the host (and container) behind a target in the inventory.
@@ -212,9 +217,25 @@ func validFilter(f string) bool {
 
 // pump copies events to the socket until either side ends. The browser sends nothing, so
 // CloseRead only watches for it going away.
-func (a *logsAPI) pump(r *http.Request, conn *websocket.Conn, wt *logs.Watcher, lowerFilter string) {
+// streamRecheck returns the check run on every keepalive. It looks the caller up again, resolves the
+// target again and applies the scope rules again, so a revoked session, a changed role or a container or
+// host that moved out of scope ends the stream without waiting for the browser to reconnect.
+func (a *logsAPI) streamRecheck(r *http.Request, target logTarget) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		p, ok := a.reauthenticate(ctx, r)
+		if !ok {
+			return false
+		}
+		host, container, ok := a.resolve(target)
+		if !ok || auth.AuthorizeOn(p, auth.ActionLogsStream, logResource(target, host, container)) != nil {
+			return false
+		}
+		return a.scope == nil || a.scope(ctx, p, host.ID, container.ID)
+	}
+}
+
+func (a *logsAPI) pump(r *http.Request, conn *websocket.Conn, wt *logs.Watcher, lowerFilter string, recheck func(context.Context) bool) {
 	ctx := conn.CloseRead(r.Context())
-	cookie, _ := r.Cookie(sessionCookie)
 	tick := time.NewTicker(wsKeepalive)
 	defer tick.Stop()
 
@@ -245,11 +266,8 @@ func (a *logsAPI) pump(r *http.Request, conn *websocket.Conn, wt *logs.Watcher, 
 				return
 			}
 		case <-tick.C:
-			// A long-lived stream must not outlive the session that opened it.
-			if cookie == nil {
-				return
-			}
-			if p, _, err := a.svc.Authenticate(ctx, cookie.Value); err != nil || !p.Authenticated() || auth.Authorize(p, auth.ActionLogsStream) != nil {
+			// A long-lived stream must not outlive the authority that opened it.
+			if !recheck(ctx) {
 				write(logs.Event{Type: logs.TypeEnd, Reason: logs.ReasonSessionExpired})
 				_ = conn.Close(websocket.StatusPolicyViolation, "session ended")
 				return
@@ -262,4 +280,12 @@ func (a *logsAPI) pump(r *http.Request, conn *websocket.Conn, wt *logs.Watcher, 
 			}
 		}
 	}
+}
+
+// logResource is the scope resource of a log target: the container's tags over its host's, or the host's for a journal unit.
+func logResource(t logTarget, h inventory.Host, c inventory.Container) auth.Resource {
+	if t.kind == logs.KindContainer {
+		return containerResource(c, h)
+	}
+	return hostResource(h)
 }

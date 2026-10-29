@@ -80,6 +80,11 @@ func (a *inventoryAPI) putMeta(w http.ResponseWriter, r *http.Request, body any,
 		return
 	}
 	itemType = strings.TrimSuffix(itemType, "s")
+	cur, found := a.itemTags(itemType, id)
+	if !found || !p.Covers(auth.ActionItemMetaUpdate, a.metaResource(itemType, id, cur)) {
+		writeError(w, http.StatusNotFound, errcode.APINF001)
+		return
+	}
 	ifMatch := r.Header.Get("If-Match")
 	if ifMatch == "" {
 		writeError(w, http.StatusPreconditionRequired, errcode.APIPre002)
@@ -91,6 +96,11 @@ func (a *inventoryAPI) putMeta(w http.ResponseWriter, r *http.Request, body any,
 	change, details := build()
 	if details == nil {
 		writeErrorDetail(w, http.StatusUnprocessableEntity, errcode.APIVal001, "owner", "Send the owner, or an empty string to clear it.")
+		return
+	}
+	if change.Tags != nil && !p.Covers(auth.ActionItemMetaUpdate, a.metaResource(itemType, id, change.Tags)) {
+		// A scoped operator must not tag an item out of their own scope.
+		a.fail(w, r, errcode.New(errcode.AuthRBAC002, "new tags put %s %s outside the caller's scope", itemType, id))
 		return
 	}
 	ev := audit.Event{
@@ -124,7 +134,8 @@ func (a *inventoryAPI) putMeta(w http.ResponseWriter, r *http.Request, body any,
 
 // search serves the command palette (INV-5).
 func (a *inventoryAPI) search(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionSearch); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionSearch)
+	if !ok {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -141,6 +152,27 @@ func (a *inventoryAPI) search(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	// Every viewer sees every item in v0.1; role-binding scopes arrive with RBAC and will filter here.
-	writeJSON(w, http.StatusOK, map[string]any{"items": a.inv.Index().Search(q, limit)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": a.inv.Index().SearchAllowed(q, limit, hostAllow(p, auth.ActionSearch), containerAllow(p, auth.ActionSearch))})
+}
+
+// itemTags returns the current own tags of a host or container.
+func (a *inventoryAPI) itemTags(itemType, id string) (map[string]string, bool) {
+	ix := a.inv.Index()
+	if itemType == "host" {
+		h, ok := ix.Host(id)
+		return h.Tags, ok
+	}
+	c, ok := ix.Container(id)
+	return c.Tags, ok
+}
+
+// metaResource is the scope resource of an item as if it carried tags (its own, for a container
+// laid over its host's).
+func (a *inventoryAPI) metaResource(itemType, id string, tags map[string]string) auth.Resource {
+	if itemType == "host" {
+		return auth.ResourceOf(tags)
+	}
+	c, _ := a.inv.Index().Container(id)
+	c.Tags = tags
+	return a.containerRes(c)
 }

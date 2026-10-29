@@ -11,6 +11,7 @@ import (
 	"github.com/nuxdeck/nuxdeck/internal/server/alerting"
 	"github.com/nuxdeck/nuxdeck/internal/server/alerting/notify"
 	"github.com/nuxdeck/nuxdeck/internal/server/auth"
+	"github.com/nuxdeck/nuxdeck/internal/server/inventory"
 )
 
 // maxAlertBody bounds rule, silence, channel and route documents.
@@ -20,6 +21,8 @@ type alertsAPI struct {
 	*authAPI
 	alerts   *alerting.Service
 	channels *alerting.Channels
+	// inv resolves the items alerts and selectors name, for scope checks (ACC-5); nil treats them as unscoped-only.
+	inv *inventory.Service
 }
 
 func (a *alertsAPI) register(mux *http.ServeMux) {
@@ -49,40 +52,41 @@ func (a *alertsAPI) register(mux *http.ServeMux) {
 }
 
 // write is the shared head of the changing endpoints: authorise, CSRF and path ID.
-func (a *alertsAPI) write(w http.ResponseWriter, r *http.Request, action auth.Action, needID bool) (alerting.Actor, string, bool) {
+func (a *alertsAPI) write(w http.ResponseWriter, r *http.Request, action auth.Action, needID bool) (alerting.Actor, string, auth.Principal, bool) {
 	p, sess, ok := a.begin(w, r, action)
 	if !ok {
-		return alerting.Actor{}, "", false
+		return alerting.Actor{}, "", p, false
 	}
 	if !sameOrigin(r) || !a.svc.CheckCSRF(*sess, r.Header.Get(csrfHeader)) {
 		a.fail(w, r, errcode.New(errcode.AuthDeny004, "missing or wrong CSRF token"))
-		return alerting.Actor{}, "", false
+		return alerting.Actor{}, "", p, false
 	}
 	var id string
 	if needID {
 		id = r.PathValue("id")
 		if !ulid.MatchString(id) {
 			writeError(w, http.StatusNotFound, errcode.APINF001)
-			return alerting.Actor{}, "", false
+			return alerting.Actor{}, "", p, false
 		}
 	}
-	return alerting.Actor{UserID: p.UserID, IP: clientOf(r).IP}, id, true
+	return alerting.Actor{UserID: p.UserID, IP: clientOf(r).IP}, id, p, true
 }
 
 // read authorises a GET and validates the path ID, if any.
-func (a *alertsAPI) read(w http.ResponseWriter, r *http.Request, action auth.Action, needID bool) (string, bool) {
-	if _, _, ok := a.begin(w, r, action); !ok {
-		return "", false
+func (a *alertsAPI) read(w http.ResponseWriter, r *http.Request, action auth.Action, needID bool) (string, auth.Principal, bool) {
+	p, _, ok := a.begin(w, r, action)
+	if !ok {
+		return "", p, false
 	}
 	if !needID {
-		return "", true
+		return "", p, true
 	}
 	id := r.PathValue("id")
 	if !ulid.MatchString(id) {
 		writeError(w, http.StatusNotFound, errcode.APINF001)
-		return "", false
+		return "", p, false
 	}
-	return id, true
+	return id, p, true
 }
 
 func ifMatchOf(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -147,7 +151,8 @@ func cursorOf(w http.ResponseWriter, r *http.Request) (cursor string, limit int,
 // ---- rules ----
 
 func (a *alertsAPI) listRules(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.read(w, r, auth.ActionRulesRead, false); !ok {
+	_, p, ok := a.read(w, r, auth.ActionRulesRead, false)
+	if !ok {
 		return
 	}
 	cursor, limit, ok := cursorOf(w, r)
@@ -158,11 +163,13 @@ func (a *alertsAPI) listRules(w http.ResponseWriter, r *http.Request) {
 	if a.alertErr(w, r, err) {
 		return
 	}
+	// Filtering follows pagination, so a scoped caller can get a short page that still has a cursor.
+	items = keep(items, func(rule alerting.Rule) bool { return selectorCovered(p, auth.ActionRulesRead, a.inv, rule.Selector) })
 	writeJSON(w, http.StatusOK, pageOf(items, next))
 }
 
 func (a *alertsAPI) getRule(w http.ResponseWriter, r *http.Request) {
-	id, ok := a.read(w, r, auth.ActionRulesRead, true)
+	id, p, ok := a.read(w, r, auth.ActionRulesRead, true)
 	if !ok {
 		return
 	}
@@ -170,17 +177,25 @@ func (a *alertsAPI) getRule(w http.ResponseWriter, r *http.Request) {
 	if a.alertErr(w, r, err) {
 		return
 	}
+	if !selectorCovered(p, auth.ActionRulesRead, a.inv, rule.Selector) {
+		scopeDenied(w)
+		return
+	}
 	w.Header().Set("ETag", rule.ETag())
 	writeJSON(w, http.StatusOK, rule)
 }
 
 func (a *alertsAPI) createRule(w http.ResponseWriter, r *http.Request) {
-	who, _, ok := a.write(w, r, auth.ActionRulesWrite, false)
+	who, _, p, ok := a.write(w, r, auth.ActionRulesWrite, false)
 	if !ok {
 		return
 	}
 	var in alerting.Rule
 	if !a.decodeMax(w, r, &in, maxAlertBody) {
+		return
+	}
+	if !selectorCovered(p, auth.ActionRulesWrite, a.inv, in.Selector) {
+		a.fail(w, r, errcode.New(errcode.AuthRBAC002, "rule selector is outside the caller's scope"))
 		return
 	}
 	rule, err := a.alerts.CreateRule(r.Context(), in, who)
@@ -193,7 +208,7 @@ func (a *alertsAPI) createRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) updateRule(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionRulesWrite, true)
+	who, id, p, ok := a.write(w, r, auth.ActionRulesWrite, true)
 	if !ok {
 		return
 	}
@@ -205,6 +220,9 @@ func (a *alertsAPI) updateRule(w http.ResponseWriter, r *http.Request) {
 	if !a.decodeMax(w, r, &in, maxAlertBody) {
 		return
 	}
+	if !a.ruleWritable(w, r, p, id, &in.Selector) {
+		return
+	}
 	rule, err := a.alerts.UpdateRule(r.Context(), id, ifMatch, in, who)
 	if a.alertErr(w, r, err) {
 		return
@@ -214,8 +232,11 @@ func (a *alertsAPI) updateRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) deleteRule(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionRulesWrite, true)
+	who, id, p, ok := a.write(w, r, auth.ActionRulesWrite, true)
 	if !ok {
+		return
+	}
+	if !a.ruleWritable(w, r, p, id, nil) {
 		return
 	}
 	if a.alertErr(w, r, a.alerts.DeleteRule(r.Context(), id, who)) {
@@ -227,7 +248,8 @@ func (a *alertsAPI) deleteRule(w http.ResponseWriter, r *http.Request) {
 // ---- alerts ----
 
 func (a *alertsAPI) listAlerts(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.read(w, r, auth.ActionAlertsRead, false); !ok {
+	_, p, ok := a.read(w, r, auth.ActionAlertsRead, false)
+	if !ok {
 		return
 	}
 	cursor, limit, ok := cursorOf(w, r)
@@ -244,11 +266,12 @@ func (a *alertsAPI) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if a.alertErr(w, r, err) {
 		return
 	}
+	items = keep(items, func(al alerting.Alert) bool { return p.Covers(auth.ActionAlertsRead, alertResource(a.inv, al)) })
 	writeJSON(w, http.StatusOK, pageOf(items, next))
 }
 
 func (a *alertsAPI) getAlert(w http.ResponseWriter, r *http.Request) {
-	id, ok := a.read(w, r, auth.ActionAlertsRead, true)
+	id, p, ok := a.read(w, r, auth.ActionAlertsRead, true)
 	if !ok {
 		return
 	}
@@ -256,12 +279,20 @@ func (a *alertsAPI) getAlert(w http.ResponseWriter, r *http.Request) {
 	if a.alertErr(w, r, err) {
 		return
 	}
+	if !p.Covers(auth.ActionAlertsRead, alertResource(a.inv, al)) {
+		scopeDenied(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, al)
 }
 
 func (a *alertsAPI) ack(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionAlertsAck, true)
+	who, id, p, ok := a.write(w, r, auth.ActionAlertsAck, true)
 	if !ok {
+		return
+	}
+	if cur, err := a.alerts.GetAlert(r.Context(), id); err == nil && !p.Covers(auth.ActionAlertsAck, alertResource(a.inv, cur)) {
+		scopeDenied(w)
 		return
 	}
 	al, err := a.alerts.Ack(r.Context(), id, who)
@@ -274,7 +305,8 @@ func (a *alertsAPI) ack(w http.ResponseWriter, r *http.Request) {
 // ---- silences ----
 
 func (a *alertsAPI) listSilences(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.read(w, r, auth.ActionSilencesRead, false); !ok {
+	_, p, ok := a.read(w, r, auth.ActionSilencesRead, false)
+	if !ok {
 		return
 	}
 	cursor, limit, ok := cursorOf(w, r)
@@ -294,16 +326,21 @@ func (a *alertsAPI) listSilences(w http.ResponseWriter, r *http.Request) {
 	if a.alertErr(w, r, err) {
 		return
 	}
+	items = keep(items, func(sl alerting.Silence) bool { return selectorCovered(p, auth.ActionSilencesRead, a.inv, sl.Selector) })
 	writeJSON(w, http.StatusOK, pageOf(items, next))
 }
 
 func (a *alertsAPI) createSilence(w http.ResponseWriter, r *http.Request) {
-	who, _, ok := a.write(w, r, auth.ActionSilencesWrite, false)
+	who, _, p, ok := a.write(w, r, auth.ActionSilencesWrite, false)
 	if !ok {
 		return
 	}
 	var in alerting.Silence
 	if !a.decodeMax(w, r, &in, maxAlertBody) {
+		return
+	}
+	if !selectorCovered(p, auth.ActionSilencesWrite, a.inv, in.Selector) {
+		a.fail(w, r, errcode.New(errcode.AuthRBAC002, "silence selector is outside the caller's scope"))
 		return
 	}
 	s, err := a.alerts.CreateSilence(r.Context(), in, who)
@@ -315,9 +352,15 @@ func (a *alertsAPI) createSilence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) deleteSilence(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionSilencesWrite, true)
+	who, id, p, ok := a.write(w, r, auth.ActionSilencesWrite, true)
 	if !ok {
 		return
+	}
+	if !unrestricted(p, auth.ActionSilencesWrite) {
+		if !a.silenceInScope(r, p, id) {
+			scopeDenied(w)
+			return
+		}
 	}
 	if a.alertErr(w, r, a.alerts.DeleteSilence(r.Context(), id, who)) {
 		return
@@ -328,7 +371,7 @@ func (a *alertsAPI) deleteSilence(w http.ResponseWriter, r *http.Request) {
 // ---- channels ----
 
 func (a *alertsAPI) listChannels(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.read(w, r, auth.ActionChannelsRead, false); !ok {
+	if _, _, ok := a.read(w, r, auth.ActionChannelsRead, false); !ok {
 		return
 	}
 	cursor, limit, ok := pageParams(w, r)
@@ -347,7 +390,7 @@ func (a *alertsAPI) listChannels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) getChannel(w http.ResponseWriter, r *http.Request) {
-	id, ok := a.read(w, r, auth.ActionChannelsRead, true)
+	id, _, ok := a.read(w, r, auth.ActionChannelsRead, true)
 	if !ok {
 		return
 	}
@@ -360,7 +403,7 @@ func (a *alertsAPI) getChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) createChannel(w http.ResponseWriter, r *http.Request) {
-	who, _, ok := a.write(w, r, auth.ActionChannelsWrite, false)
+	who, _, _, ok := a.write(w, r, auth.ActionChannelsWrite, false)
 	if !ok {
 		return
 	}
@@ -378,7 +421,7 @@ func (a *alertsAPI) createChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) updateChannel(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionChannelsWrite, true)
+	who, id, _, ok := a.write(w, r, auth.ActionChannelsWrite, true)
 	if !ok {
 		return
 	}
@@ -399,7 +442,7 @@ func (a *alertsAPI) updateChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) deleteChannel(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionChannelsWrite, true)
+	who, id, _, ok := a.write(w, r, auth.ActionChannelsWrite, true)
 	if !ok {
 		return
 	}
@@ -410,7 +453,7 @@ func (a *alertsAPI) deleteChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) testChannel(w http.ResponseWriter, r *http.Request) {
-	who, id, ok := a.write(w, r, auth.ActionChannelsTest, true)
+	who, id, _, ok := a.write(w, r, auth.ActionChannelsTest, true)
 	if !ok {
 		return
 	}
@@ -427,7 +470,7 @@ type routesDoc struct {
 }
 
 func (a *alertsAPI) getRoutes(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.read(w, r, auth.ActionRoutesRead, false); !ok {
+	if _, _, ok := a.read(w, r, auth.ActionRoutesRead, false); !ok {
 		return
 	}
 	l, err := a.alerts.Routes(r.Context())
@@ -439,7 +482,7 @@ func (a *alertsAPI) getRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *alertsAPI) putRoutes(w http.ResponseWriter, r *http.Request) {
-	who, _, ok := a.write(w, r, auth.ActionRoutesWrite, false)
+	who, _, _, ok := a.write(w, r, auth.ActionRoutesWrite, false)
 	if !ok {
 		return
 	}
@@ -457,4 +500,50 @@ func (a *alertsAPI) putRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", l.ETag())
 	writeJSON(w, http.StatusOK, routesDoc{Routes: l.Routes})
+}
+
+// keep returns the items f accepts, never nil.
+func keep[T any](items []T, f func(T) bool) []T {
+	out := make([]T, 0, len(items))
+	for _, it := range items {
+		if f(it) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// ruleWritable checks that a scoped caller may change rule id, and that the replacement selector
+// (if any) stays in scope. A caller with an unscoped role skips the lookup.
+func (a *alertsAPI) ruleWritable(w http.ResponseWriter, r *http.Request, p auth.Principal, id string, next *alerting.Selector) bool {
+	if unrestricted(p, auth.ActionRulesWrite) {
+		return true
+	}
+	cur, err := a.alerts.GetRule(r.Context(), id)
+	if err != nil {
+		return !a.alertErr(w, r, err)
+	}
+	if !selectorCovered(p, auth.ActionRulesWrite, a.inv, cur.Selector) {
+		scopeDenied(w)
+		return false
+	}
+	if next != nil && !selectorCovered(p, auth.ActionRulesWrite, a.inv, *next) {
+		a.fail(w, r, errcode.New(errcode.AuthRBAC002, "rule selector is outside the caller's scope"))
+		return false
+	}
+	return true
+}
+
+// silenceInScope finds silence id among the stored silences and checks its selector against p.
+func (a *alertsAPI) silenceInScope(r *http.Request, p auth.Principal, id string) bool {
+	items, _, err := a.alerts.ListSilences(r.Context(), false, "", 500)
+	if err != nil {
+		return false
+	}
+	for _, s := range items {
+		if s.ID == id {
+			return selectorCovered(p, auth.ActionSilencesWrite, a.inv, s.Selector)
+		}
+	}
+	return false
 }

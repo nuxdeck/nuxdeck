@@ -34,13 +34,18 @@ func (a *metricsAPI) bad(w http.ResponseWriter, field, hint string) {
 // query serves chart data: target (host or container ID), metric, from, to (unix ms or
 // RFC 3339), step (seconds, optional) and repeated label=name:value filters.
 func (a *metricsAPI) query(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionMetricsRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionMetricsRead)
+	if !ok {
 		return
 	}
 	v := r.URL.Query()
 	target := v.Get("target")
 	if !ulid.MatchString(target) {
 		a.bad(w, "target", "Use a host or container ID.")
+		return
+	}
+	if res, found := itemResource(a.inv, target); found && !p.Covers(auth.ActionMetricsRead, res) {
+		writeError(w, http.StatusNotFound, errcode.APINF001) // out of scope looks like it does not exist
 		return
 	}
 	var targetType string
@@ -54,7 +59,6 @@ func (a *metricsAPI) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := metrics.Query{TargetType: targetType, Target: target, Metric: v.Get("metric")}
-	var ok bool
 	if q.From, ok = parseTime(v.Get("from")); !ok {
 		a.bad(w, "from", "Use unix milliseconds or an RFC 3339 time.")
 		return
@@ -100,7 +104,8 @@ func (a *metricsAPI) query(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *metricsAPI) pressure(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.begin(w, r, auth.ActionMetricsRead); !ok {
+	p, _, ok := a.begin(w, r, auth.ActionMetricsRead)
+	if !ok {
 		return
 	}
 	limit := defaultPageSize
@@ -112,7 +117,7 @@ func (a *metricsAPI) pressure(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	rep, err := a.m.Pressure(r.Context(), limit)
+	rep, err := a.m.PressureAllowed(r.Context(), limit, hostAllow(p, auth.ActionMetricsRead), containerAllow(p, auth.ActionMetricsRead))
 	if err != nil {
 		a.log.Error("pressure ranking failed", "request_id", requestID(r.Context()), "error", err)
 		writeError(w, http.StatusInternalServerError, errcode.APIInt001)
