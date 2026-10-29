@@ -7,7 +7,7 @@ SPDX-FileCopyrightText = "2026 The Nux Deck Authors"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 [[annotations]]
-path = ["cmd/nux/**", "internal/agent/**", "internal/errcode/**", "proto/**", "pkg/**", "deploy/**", "test/**"]
+path = ["cmd/nux/**", "internal/agent/**", "internal/errcode/**", "proto/**", "pkg/**", "deploy/**", "test/**", "api/**", "site/**"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 The Nux Deck Authors"
 SPDX-License-Identifier = "Apache-2.0"

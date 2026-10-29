@@ -720,12 +720,18 @@ func (e SelectorSeverity) Valid() bool {
 
 // Defines values for SettingUpdateKey.
 const (
+	ServerPublicUrl  SettingUpdateKey = "server.public_url"
+	SetupCompleted   SettingUpdateKey = "setup.completed"
 	TelemetryEnabled SettingUpdateKey = "telemetry.enabled"
 )
 
 // Valid indicates whether the value is a known member of the SettingUpdateKey enum.
 func (e SettingUpdateKey) Valid() bool {
 	switch e {
+	case ServerPublicUrl:
+		return true
+	case SetupCompleted:
+		return true
 	case TelemetryEnabled:
 		return true
 	default:
@@ -1804,6 +1810,11 @@ type SettingUpdateKey string
 
 // Settings Editable settings keyed by name.
 type Settings struct {
+	// ServerPublicUrl The address agents and browsers use, as scheme and host with an optional port. Empty until set in the setup wizard.
+	ServerPublicUrl string `json:"server.public_url"`
+
+	// SetupCompleted True once the administrator has finished the setup wizard.
+	SetupCompleted   bool `json:"setup.completed"`
 	TelemetryEnabled bool `json:"telemetry.enabled"`
 
 	// TelemetryLocked True when an environment setting fixes telemetry; the UI then shows it read-only.
@@ -3716,7 +3727,7 @@ type ClientInterface interface {
 
 	// PutSettingWithBody Change one editable setting
 	//
-	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3725,7 +3736,7 @@ type ClientInterface interface {
 
 	// PutSetting Change one editable setting
 	//
-	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5368,7 +5379,7 @@ func (c *Client) GetSettings(ctx context.Context, reqEditors ...RequestEditorFn)
 
 // PutSettingWithBody Change one editable setting
 //
-// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 //
 // Takes any type of body and a specified content type.
 //
@@ -5387,7 +5398,7 @@ func (c *Client) PutSettingWithBody(ctx context.Context, params *PutSettingParam
 
 // PutSetting Change one editable setting
 //
-// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11602,7 +11613,7 @@ type ClientWithResponsesInterface interface {
 
 	// PutSettingWithBodyWithResponse Change one editable setting
 	//
-	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11611,7 +11622,7 @@ type ClientWithResponsesInterface interface {
 
 	// PutSettingWithResponse Change one editable setting
 	//
-	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+	// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19314,7 +19325,7 @@ func (c *ClientWithResponses) GetSettingsWithResponse(ctx context.Context, reqEd
 
 // PutSettingWithBodyWithResponse Change one editable setting
 //
-// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19329,7 +19340,7 @@ func (c *ClientWithResponses) PutSettingWithBodyWithResponse(ctx context.Context
 
 // PutSettingWithResponse Change one editable setting
 //
-// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+// Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

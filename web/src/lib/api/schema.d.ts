@@ -544,7 +544,7 @@ export interface paths {
     get: operations['getSettings'];
     /**
      * Change one editable setting
-     * @description Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true.
+     * @description Only the keys listed in the response of `GET /settings` can be written. `telemetry.enabled` is refused while `telemetry.locked` is true. `server.public_url` must be an http or https address with a host and no credentials, path, query or fragment.
      */
     put: operations['putSetting'];
     post?: never;
@@ -1595,10 +1595,14 @@ export interface components {
       'telemetry.enabled': boolean;
       /** @description True when an environment setting fixes telemetry; the UI then shows it read-only. */
       'telemetry.locked': boolean;
+      /** @description The address agents and browsers use, as scheme and host with an optional port. Empty until set in the setup wizard. */
+      'server.public_url': string;
+      /** @description True once the administrator has finished the setup wizard. */
+      'setup.completed': boolean;
     };
     SettingUpdate: {
       /** @enum {string} */
-      key: 'telemetry.enabled';
+      key: 'telemetry.enabled' | 'server.public_url' | 'setup.completed';
       value: unknown;
     };
     /** @description Schema version 1 only. Fields are fixed by docs/01-vision.md. */

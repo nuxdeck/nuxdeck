@@ -522,13 +522,18 @@ func TestPerformance24hOneHostFiftyContainers(t *testing.T) { // MET-6: under 1 
 			t.Fatal(err, r)
 		}
 	}
+	// The one-second budget is for a normal build; the race detector makes these queries several times slower.
+	budget := time.Second
+	if raceEnabled {
+		budget = 10 * time.Second
+	}
 	perQuery := time.Since(start) / time.Duration(len(ctrs))
 	t.Logf("24h single-series query: %v average over %d containers", perQuery, len(ctrs))
-	if perQuery > time.Second {
+	if perQuery > budget {
 		t.Fatalf("24h query took %v", perQuery)
 	}
 	// Even all 51 targets one after another must fit in one second.
-	if total := time.Since(start); total > time.Second {
+	if total := time.Since(start); total > budget {
 		t.Fatalf("51 sequential 24h queries took %v", total)
 	}
 	start = time.Now()
@@ -536,7 +541,7 @@ func TestPerformance24hOneHostFiftyContainers(t *testing.T) { // MET-6: under 1 
 		t.Fatal(err)
 	}
 	t.Logf("pressure ranking: %v", time.Since(start))
-	if time.Since(start) > time.Second {
+	if time.Since(start) > budget {
 		t.Fatal("pressure ranking too slow")
 	}
 }

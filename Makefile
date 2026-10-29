@@ -48,12 +48,14 @@ OAPI_CODEGEN := github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 API_SPEC := api/openapi.yaml
 API_GO_OUT := pkg/client/client.gen.go
 API_TS_OUT := web/src/lib/api/schema.d.ts
+# Kept out of the printf format so REUSE does not read the recipe as a licence tag.
+SPDX_TAG := SPDX-License-Identifier
 
 api: web/node_modules
 	go run $(OAPI_CODEGEN) --config api/oapi-codegen.yaml $(API_SPEC)
-	@tmp=$$(mktemp) && { printf '// SPDX-License-Identifier: Apache-2.0\n\n'; cat $(API_GO_OUT); } > "$$tmp" && mv "$$tmp" $(API_GO_OUT) && chmod 644 $(API_GO_OUT)
+	@tmp=$$(mktemp) && { printf '// %s: Apache-2.0\n\n' $(SPDX_TAG); cat $(API_GO_OUT); } > "$$tmp" && mv "$$tmp" $(API_GO_OUT) && chmod 644 $(API_GO_OUT)
 	cd web && npx --no-install openapi-typescript ../$(API_SPEC) --output src/lib/api/schema.d.ts
-	@tmp=$$(mktemp) && { printf '// SPDX-License-Identifier: AGPL-3.0-only\n\n'; cat $(API_TS_OUT); } > "$$tmp" && mv "$$tmp" $(API_TS_OUT) && chmod 644 $(API_TS_OUT)
+	@tmp=$$(mktemp) && { printf '// %s: AGPL-3.0-only\n\n' $(SPDX_TAG); cat $(API_TS_OUT); } > "$$tmp" && mv "$$tmp" $(API_TS_OUT) && chmod 644 $(API_TS_OUT)
 	cd web && npx --no-install prettier --write src/lib/api/schema.d.ts >/dev/null
 
 api-check:
