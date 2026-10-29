@@ -53,6 +53,9 @@ export type Route =
   | { kind: 'check-new' }
   | { kind: 'check'; id: string }
   | { kind: 'check-edit'; id: string }
+  | { kind: 'account' }
+  | { kind: 'users' }
+  | { kind: 'setup' }
   | { kind: 'not-found' };
 
 // Item IDs are ULIDs (26 Crockford base32 characters); anything else cannot name an item.
@@ -61,6 +64,9 @@ const ITEM_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 /** Maps a pathname to the screen that serves it. */
 export function resolveRoute(path: string): Route {
   if (findSection(path)) return { kind: 'section', path };
+  if (path === '/account') return { kind: 'account' };
+  if (path === '/settings/users') return { kind: 'users' };
+  if (path === '/setup') return { kind: 'setup' };
   const [, alertsPage] = /^\/alerts\/(rules|silences|channels|routes)$/.exec(path) ?? [];
   if (alertsPage) return { kind: 'alerts', view: alertsPage as AlertsView };
   const [, alertId] = /^\/alerts\/([^/]+)$/.exec(path) ?? [];
@@ -94,6 +100,8 @@ export function sectionOf(route: Route): string | undefined {
     case 'alerts':
     case 'alert':
       return '/alerts';
+    case 'users':
+      return '/settings';
     default:
       return undefined;
   }

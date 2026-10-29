@@ -110,11 +110,13 @@ describe('overview pressure grid (MET-7)', () => {
     const calls = fakeServer({ [PATH]: report({ hosts: [row(H1, 'alpha', { score: 1 })] }) });
     const { unmount } = render(Overview);
     await screen.findByRole('table', { name: /Hosts ranked/ });
-    expect(calls).toHaveLength(1);
+    // The next-steps checklist makes its own requests; this test counts pressure refreshes only.
+    const pressure = () => calls.filter((c) => c.method + ' ' + c.path === PATH).length;
+    expect(pressure()).toBe(1);
     await vi.advanceTimersByTimeAsync(15_000);
-    await waitFor(() => expect(calls).toHaveLength(2));
+    await waitFor(() => expect(pressure()).toBe(2));
     unmount();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(calls).toHaveLength(2);
+    expect(pressure()).toBe(2);
   });
 });
