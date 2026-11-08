@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Test-only image for the agents, the sockguard sidecars and the backup job. nuxd is included
+# because `nux backup` and `nux restore` run the nuxd binary found on PATH.
+FROM alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+RUN mkdir -p /var/lib/nux-agent /run/nux /var/lib/nuxd /var/lib/nuxd-restored \
+ && chown 65532:65532 /var/lib/nux-agent /run/nux /var/lib/nuxd /var/lib/nuxd-restored
+COPY bin/nux /usr/local/bin/nux
+COPY bin/nuxd /usr/local/bin/nuxd
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/nux"]
+CMD ["agent", "run"]

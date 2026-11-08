@@ -1,0 +1,20 @@
+{
+  "name": "nuxdeck-e2e-ui",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser end-to-end and accessibility tests for the Nux Deck web UI (Apache-2.0)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.0"
+  }
+}
