@@ -32,6 +32,13 @@ describe('source policy (docs/08-engineering-spec.md, docs/04-security.md)', () 
     expect(offenders(svelte, /\{@html\b/)).toEqual([]);
   });
 
+  it('never injects code: no innerHTML, eval or Function constructor in app sources', () => {
+    expect(offenders(all, /\.innerHTML\b|\binnerHTML\s*=/)).toEqual([]);
+    expect(offenders(all, /\beval\s*\(/)).toEqual([]);
+    expect(offenders(all, /\bnew\s+Function\s*\(/)).toEqual([]);
+    expect(offenders(all, /\{@html\b/)).toEqual([]);
+  });
+
   it('uses no inline style attributes, which the CSP blocks', () => {
     expect(offenders(svelte, /\sstyle\s*=/)).toEqual([]);
   });

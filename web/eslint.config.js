@@ -26,6 +26,30 @@ export default tseslint.config(
       // API data must never be rendered as HTML (docs/08-engineering-spec.md).
       'svelte/no-at-html-tags': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
+      // Code injection and raw HTML sinks are banned outright (docs/04-security.md, XSS).
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
+      'no-restricted-properties': [
+        'error',
+        {
+          property: 'innerHTML',
+          message: 'Render text with Svelte bindings; innerHTML is an XSS sink.',
+        },
+        {
+          property: 'outerHTML',
+          message: 'Render text with Svelte bindings; outerHTML is an XSS sink.',
+        },
+        {
+          property: 'insertAdjacentHTML',
+          message: 'Render text with Svelte bindings; insertAdjacentHTML is an XSS sink.',
+        },
+      ],
     },
+  },
+  {
+    // Test files may build DOM fixtures; the source-policy test in src/lib/ui guards app code.
+    files: ['**/*.test.ts'],
+    rules: { 'no-restricted-properties': 'off' },
   },
 );
