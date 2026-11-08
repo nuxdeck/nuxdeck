@@ -27,7 +27,10 @@ async function open(page: Page, path: string): Promise<void> {
 }
 
 test.describe('axe on the main screens', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   for (const theme of themes) {
     test.describe(`${theme} theme`, () => {

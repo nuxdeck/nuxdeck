@@ -54,8 +54,9 @@ func TestM4_StagingViewerCannotSeeProduction(t *testing.T) {
 		if err := viewer.do(ctx, http.MethodGet, "/api/v1/containers/"+prodContainer, nil, nil); !refusedOrHidden(err) {
 			t.Errorf("viewer reads the production container directly: %v", err)
 		}
+		now := time.Now()
 		if err := viewer.do(ctx, http.MethodGet, "/api/v1/metrics/query?target="+s.hostB+"&metric="+metricHostCPU+
-			"&from=0&to=9999999999999&step=60", nil, nil); !refusedOrHidden(err) {
+			"&from="+fmt.Sprint(now.Add(-time.Hour).UnixMilli())+"&to="+fmt.Sprint(now.UnixMilli())+"&step=60", nil, nil); !refusedOrHidden(err) {
 			t.Errorf("viewer queries production host metrics: %v", err)
 		}
 	})
@@ -121,11 +122,45 @@ func (s *stack) scopedViewer(ctx context.Context, t testing.TB) *apiClient {
 	}, &acct); err != nil {
 		t.Fatalf("create viewer: %v", err)
 	}
+	// Creating a user with a role also stores an unscoped binding for it; the bindings union, so
+	// that one would give the viewer everything. Remove it, then add the scoped binding.
+	var bindings struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Subject string `json:"subject"`
+			Scope   struct {
+				Environments []string   `json:"environments"`
+				TagSets      [][]string `json:"tag_sets"`
+			} `json:"scope"`
+		} `json:"items"`
+	}
+	if err := s.admin.do(ctx, http.MethodGet, "/api/v1/role-bindings", nil, &bindings); err != nil {
+		t.Fatalf("list role bindings: %v", err)
+	}
+	for _, b := range bindings.Items {
+		if b.Subject == acct.ID && len(b.Scope.Environments) == 0 && len(b.Scope.TagSets) == 0 {
+			if err := s.admin.do(ctx, http.MethodDelete, "/api/v1/role-bindings/"+b.ID, nil, nil); err != nil {
+				t.Fatalf("remove unscoped viewer binding: %v", err)
+			}
+		}
+	}
 	if err := s.admin.do(ctx, http.MethodPost, "/api/v1/role-bindings", map[string]any{
 		"subject_type": "user", "subject": acct.ID, "role": "viewer",
 		"scope": map[string]any{"tag_sets": [][]string{{"env:" + stagingEnv}}},
 	}, nil); err != nil {
 		t.Fatalf("bind viewer to staging: %v", err)
+	}
+	if err := s.admin.do(ctx, http.MethodGet, "/api/v1/role-bindings", nil, &bindings); err != nil {
+		t.Fatalf("list role bindings: %v", err)
+	}
+	var remaining int
+	for _, b := range bindings.Items {
+		if b.Subject == acct.ID {
+			remaining++
+		}
+	}
+	if remaining != 1 {
+		t.Fatalf("viewer has %d role bindings, want exactly the staging binding", remaining)
 	}
 	client, err := newAPIClient(s.env.BaseURL, s.env.CAPEM)
 	if err != nil {

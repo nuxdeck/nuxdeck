@@ -8,7 +8,10 @@ import { signIn } from '../helpers/session';
 test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe('sign-in and sign-out (INS-3, NFR-13)', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   test('a wrong password shows an alert and stays on the sign-in form', async ({ page }) => {
     await page.goto('/');

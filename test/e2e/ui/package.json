@@ -10,8 +10,9 @@
   },
   "scripts": {
     "test": "playwright test",
-    "lint": "eslint . && prettier --check .",
-    "format": "prettier --write ."
+    "typecheck": "../../../web/node_modules/.bin/tsc --noEmit -p tsconfig.json",
+    "lint": "../../../web/node_modules/.bin/eslint . && ../../../web/node_modules/.bin/prettier --check .",
+    "format": "../../../web/node_modules/.bin/prettier --write ."
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

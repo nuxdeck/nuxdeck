@@ -8,7 +8,10 @@ import { setTheme } from '../helpers/session';
 // button puts exactly that text on the clipboard (WCAG 2.5.3 and 4.1.2 for the button's name).
 
 test.describe('Add a host screen', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
   test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
   test.beforeEach(async ({ page }) => {

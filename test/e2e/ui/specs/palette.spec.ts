@@ -8,7 +8,10 @@ import { firstHostId, setTheme } from '../helpers/session';
 // on open, stays inside while open, and returns to the opener on close (WCAG 2.4.3, 2.1.2).
 
 test.describe('command palette', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   test.beforeEach(async ({ page }) => {
     await setTheme(page, 'light');
@@ -29,17 +32,24 @@ test.describe('command palette', () => {
   }) => {
     const hostId = await firstHostId(page);
     test.skip(!hostId, 'no host is enrolled: there is nothing to search for (see README.md)');
-    const hostname = (await (await page.request.get(`/api/v1/hosts/${hostId}`)).json()).hostname as string;
+    const hostname = (await (await page.request.get(`/api/v1/hosts/${hostId}`)).json())
+      .hostname as string;
 
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox').pressSequentially(hostname);
     const option = page.getByRole('option', { name: new RegExp(hostname) }).first();
     await expect(option).toBeVisible();
-    await expect(page.getByRole('combobox')).toHaveAttribute('aria-activedescendant', /palette-option-0/);
+    await expect(page.getByRole('combobox')).toHaveAttribute(
+      'aria-activedescendant',
+      /palette-option-0/,
+    );
 
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
-    await expect(page.getByRole('combobox')).toHaveAttribute('aria-activedescendant', /palette-option-0/);
+    await expect(page.getByRole('combobox')).toHaveAttribute(
+      'aria-activedescendant',
+      /palette-option-0/,
+    );
 
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/inventory/hosts/${hostId}$`));
@@ -59,7 +69,9 @@ test.describe('command palette', () => {
     expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBeTruthy();
   });
 
-  test('Escape closes the dialog and returns focus to the button that opened it', async ({ page }) => {
+  test('Escape closes the dialog and returns focus to the button that opened it', async ({
+    page,
+  }) => {
     const opener = page.getByRole('button', { name: /Search/ });
     await opener.click();
     const dialog = page.getByRole('dialog', { name: 'Command palette' });

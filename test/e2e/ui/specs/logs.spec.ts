@@ -10,7 +10,10 @@ import { firstHostId, setTheme } from '../helpers/session';
 const UNIT = optionalEnv('E2E_LOG_UNIT') ?? 'systemd-journald.service';
 
 test.describe('log viewer', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   test.beforeEach(async ({ page }) => {
     await setTheme(page, 'light');
@@ -44,7 +47,10 @@ test.describe('log viewer', () => {
         () => true,
         () => false,
       );
-    test.skip(!hasLines, `journal unit ${UNIT} produced fewer than two lines in 15 s; set E2E_LOG_UNIT`);
+    test.skip(
+      !hasLines,
+      `journal unit ${UNIT} produced fewer than two lines in 15 s; set E2E_LOG_UNIT`,
+    );
     const scrollable = await output.evaluate((el) => el.scrollHeight > el.clientHeight);
     test.skip(
       !scrollable,

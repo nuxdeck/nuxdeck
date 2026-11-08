@@ -21,11 +21,19 @@ const routes = [
   '/inventory/add',
 ];
 
-/** Width of the page's layout viewport in CSS pixels, with no horizontal scroll. */
-async function horizontalOverflow(page: Page): Promise<number> {
+/** Pixels the page is wider than its viewport, with the elements that stick out past the edge. */
+async function horizontalOverflow(page: Page): Promise<{ overflow: number; offenders: string[] }> {
   return page.evaluate(() => {
     const root = document.documentElement;
-    return root.scrollWidth - root.clientWidth;
+    const edge = root.clientWidth;
+    const offenders = [...document.querySelectorAll('body *')]
+      .filter((el) => el.getBoundingClientRect().right > edge + 1)
+      .slice(0, 5)
+      .map(
+        (el) =>
+          `${el.tagName.toLowerCase()}.${String(el.getAttribute('class') ?? '').split(' ')[0]}`,
+      );
+    return { overflow: root.scrollWidth - edge, offenders };
   });
 }
 
@@ -35,14 +43,19 @@ async function open(page: Page, path: string): Promise<void> {
 }
 
 test.describe('layout and focus in Chromium', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   test.beforeEach(async ({ page }) => {
     await setTheme(page, 'light');
     await page.setViewportSize({ width: 1280, height: 800 });
   });
 
-  test('the skip link is the first Tab stop and moves focus into main (2.4.1)', async ({ page }) => {
+  test('the skip link is the first Tab stop and moves focus into main (2.4.1)', async ({
+    page,
+  }) => {
     // A fresh page starts with focus on the document, so the first Tab is the first tab stop.
     await open(page, '/');
     await page.keyboard.press('Tab');
@@ -94,13 +107,20 @@ test.describe('layout and focus in Chromium', () => {
   });
 
   for (const width of [320, 640]) {
-    const label = width === 320 ? '320 CSS px (reflow, WCAG 1.4.10)' : '640 CSS px (200% zoom on a 1280 px display)';
+    const label =
+      width === 320
+        ? '320 CSS px (reflow, WCAG 1.4.10)'
+        : '640 CSS px (200% zoom on a 1280 px display)';
     test(`no horizontal page scroll at ${label}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
+      const failures: string[] = [];
       for (const route of routes) {
         await open(page, route);
-        expect(await horizontalOverflow(page), `horizontal overflow on ${route}`).toBeLessThanOrEqual(0);
+        const { overflow, offenders } = await horizontalOverflow(page);
+        if (overflow > 0)
+          failures.push(`${route}: ${overflow}px wider, e.g. ${offenders.join(', ')}`);
       }
+      expect(failures, `pages wider than ${width} CSS px`).toEqual([]);
     });
   }
 
@@ -117,11 +137,16 @@ test.describe('layout and focus in Chromium', () => {
     for (const control of controls) {
       await expect(control).toBeVisible();
       const box = await control.boundingBox();
-      expect(box && box.x >= 0 && box.x + box.width <= 640, 'control inside the viewport').toBeTruthy();
+      expect(
+        box && box.x >= 0 && box.x + box.width <= 640,
+        'control inside the viewport',
+      ).toBeTruthy();
     }
   });
 
-  test('the sidebar does not animate when reduced motion is requested (2.3.3)', async ({ page }) => {
+  test('the sidebar does not animate when reduced motion is requested (2.3.3)', async ({
+    page,
+  }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await open(page, '/');
     const sidebar = page.getByRole('navigation', { name: 'Main' });
@@ -137,16 +162,21 @@ test.describe('layout and focus in Chromium', () => {
     page,
   }) => {
     await open(page, '/');
-    const targets = page.locator('header.topbar button:visible, header.topbar a:visible, nav[aria-label="Main"] a:visible');
+    const targets = page.locator(
+      'header.topbar button:visible, header.topbar a:visible, nav[aria-label="Main"] a:visible',
+    );
     const count = await targets.count();
     expect(count, 'targets found').toBeGreaterThan(5);
     const small: string[] = [];
     for (let i = 0; i < count; i++) {
       const target = targets.nth(i);
       const box = await target.boundingBox();
-      const label = (await target.getAttribute('aria-label')) ?? (await target.textContent())?.trim();
+      const label =
+        (await target.getAttribute('aria-label')) ?? (await target.textContent())?.trim();
       if (!box || box.width < 24 || box.height < 24) {
-        small.push(`${label || '(unnamed)'} ${box ? `${Math.round(box.width)}x${Math.round(box.height)}` : 'hidden'}`);
+        small.push(
+          `${label || '(unnamed)'} ${box ? `${Math.round(box.width)}x${Math.round(box.height)}` : 'hidden'}`,
+        );
       }
     }
     expect(small, 'targets smaller than 24 by 24 CSS px').toEqual([]);

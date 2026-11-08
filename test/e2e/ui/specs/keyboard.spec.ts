@@ -8,7 +8,10 @@ import { firstHostId, setTheme } from '../helpers/session';
 // item page tabs are reached with Tab, Enter and the arrow keys, never the pointer.
 
 test.describe('keyboard navigation', () => {
-  test.skip(!adminCredentials.email, 'E2E_ADMIN_EMAIL is not set; the stack provides the admin account');
+  test.skip(
+    !adminCredentials.email,
+    'E2E_ADMIN_EMAIL is not set; the stack provides the admin account',
+  );
 
   test.beforeEach(async ({ page }) => {
     await setTheme(page, 'light');
@@ -37,7 +40,11 @@ test.describe('keyboard navigation', () => {
 
     // Tab from the heading until the host link has focus; the bound keeps a regression finite.
     await page.locator('h1#page-title').focus();
-    for (let i = 0; i < 60 && !(await hostLink.evaluate((el) => el === document.activeElement)); i++) {
+    for (
+      let i = 0;
+      i < 60 && !(await hostLink.evaluate((el) => el === document.activeElement));
+      i++
+    ) {
       await page.keyboard.press('Tab');
     }
     await expect(hostLink).toBeFocused();

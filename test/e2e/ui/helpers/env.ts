@@ -10,7 +10,9 @@ export function optionalEnv(name: string): string | undefined {
 export function requiredEnv(name: string): string {
   const value = optionalEnv(name);
   if (!value) {
-    throw new Error(`${name} is not set. Run the suite through make e2e, or export it (see README.md).`);
+    throw new Error(
+      `${name} is not set. Run the suite through make e2e, or export it (see README.md).`,
+    );
   }
   return value;
 }
