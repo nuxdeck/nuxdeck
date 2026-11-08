@@ -31,9 +31,16 @@ const (
 	failureWindow          = 5 * time.Minute
 	maxAccountFailures     = 5
 	accountLockWindow      = 15 * time.Minute
-	maxNameRunes           = 100
-	maxEmailLen            = 254
-	maxUserAgentLen        = 256
+	// Per account, whatever the address: well above maxFailuresPerWindow so that
+	// honest typing mistakes from one address rarely trip it, and capped back-off
+	// so a lock always ends on its own (see accountGuard).
+	accountFailureThreshold = 25
+	accountBackoffBase      = time.Minute
+	accountBackoffCeiling   = 15 * time.Minute
+	accountIdleReset        = time.Hour
+	maxNameRunes            = 100
+	maxEmailLen             = 254
+	maxUserAgentLen         = 256
 )
 
 // FieldError ties a validation failure to the request field it concerns.
@@ -64,11 +71,13 @@ type Config struct {
 
 // Service implements first-run setup, sign-in, sign-out and session lookup.
 type Service struct {
-	cfg       Config
-	limiter   *Limiter
-	lockout   *Limiter // per account and address (ACC-7)
-	tickets   *ticketStore
-	dummyHash string
+	cfg     Config
+	limiter *Limiter
+	lockout *Limiter // per account and address (ACC-7)
+	// accountGuard counts failures per account across all addresses (ACC-7).
+	accountGuard *accountGuard
+	tickets      *ticketStore
+	dummyHash    string
 }
 
 // SignedIn is the result of a successful setup or sign-in.
@@ -113,10 +122,18 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{
+	s := &Service{
 		cfg: cfg, limiter: NewLimiter(maxFailuresPerWindow, failureWindow, cfg.Now), dummyHash: dummy,
 		lockout: NewLimiter(maxAccountFailures, accountLockWindow, cfg.Now), tickets: newTicketStore(cfg.Now),
-	}, nil
+		accountGuard: newAccountGuard(accountFailureThreshold, accountBackoffBase, accountBackoffCeiling, accountIdleReset, cfg.Now),
+	}
+	if cfg.Accounts != nil {
+		cfg.Accounts.afterPasswordReset = func(email, userID string) {
+			s.accountGuard.Reset(email)
+			s.accountGuard.Reset("totp:" + userID)
+		}
+	}
+	return s, nil
 }
 
 // SetupRequired reports whether no account exists yet.
@@ -192,7 +209,8 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 	}
 	normalized, emailErr := normalizeEmail(email)
 	lockKey := normalized + "|" + c.IP
-	if emailErr == nil && s.lockout.Blocked(lockKey) {
+	if emailErr == nil && (s.lockout.Blocked(lockKey) || s.accountGuard.Blocked(normalized)) {
+		s.equalizeTiming(ctx, password)
 		return nil, errcode.New(errcode.AuthLock001, "account locked for this address")
 	}
 	if emailErr != nil || len(password) > maxPasswordBytes {
@@ -225,9 +243,18 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 	case !match:
 		s.recordFailure(ctx, c, "auth.login_failed", "bad_password", normalized)
 	default:
+		s.accountGuard.Reset(normalized)
 		return s.pendingLogin(ctx, user, c)
 	}
 	return nil, errcode.New(errcode.AuthDeny001, "credentials rejected")
+}
+
+// equalizeTiming spends the same hashing time a failed sign-in does, so a
+// locked account answers no faster than a wrong password.
+func (s *Service) equalizeTiming(ctx context.Context, password string) {
+	if len(password) <= maxPasswordBytes {
+		_, _ = s.cfg.Hasher.Verify(ctx, password, s.dummyHash)
+	}
 }
 
 // Authenticate resolves a session cookie. An absent, unknown or expired cookie
@@ -318,6 +345,10 @@ func (s *Service) recordFailure(ctx context.Context, c Client, action, reason, e
 		s.lockout.Fail(key)
 		if s.lockout.Blocked(key) {
 			defer s.auditFail(ctx, "", c, "auth.locked", "login_failures")
+		}
+		s.accountGuard.Fail(email)
+		if s.accountGuard.Blocked(email) {
+			defer s.auditFail(ctx, "", c, "auth.locked", "account_failures")
 		}
 	}
 	details := map[string]any{"reason": reason}

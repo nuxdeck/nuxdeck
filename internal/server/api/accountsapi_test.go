@@ -59,7 +59,8 @@ func newAccEnv(t *testing.T) *accEnv {
 		t.Fatal(err)
 	}
 	db.UseSecrets(box)
-	clock := &testClock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	// The store judges session expiry by the wall clock, so a fixed past date makes every session expire.
+	clock := &testClock{now: time.Now().UTC().Truncate(time.Second)}
 	hasher, pol := auth.NewHasherWithParams(8, 1, 1), auth.NewPasswordPolicy()
 	acc, err := auth.NewAccounts(auth.AccountsConfig{Repo: db, Hasher: hasher, Passwords: pol, Log: log, Now: clock.Now})
 	if err != nil {

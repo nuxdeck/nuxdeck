@@ -61,6 +61,11 @@ func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
 
 // newEnvWith lets a test wrap the repository the gateway sees.
 func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) *env {
+	return newEnvTuned(t, wrap, nil)
+}
+
+// newEnvTuned lets a test adjust the gateway options before it starts.
+func newEnvTuned(t *testing.T, wrap func(gateway.Repository) gateway.Repository, tweak func(*gateway.Options)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(context.Background(), dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -86,7 +91,7 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 	if wrap != nil {
 		repo = wrap(db)
 	}
-	e.gw, err = gateway.New(context.Background(), gateway.Options{
+	opts := gateway.Options{
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Repo: repo, Enroller: e.pki, Renewer: e.pki, CA: ca,
 		ServerCert: ca.ServerCertificates([]string{"localhost", "127.0.0.1"}).GetCertificate,
 		Heartbeat:  beat,
@@ -104,7 +109,11 @@ func newEnvWith(t *testing.T, wrap func(gateway.Repository) gateway.Repository) 
 			default:
 			}
 		},
-	})
+	}
+	if tweak != nil {
+		tweak(&opts)
+	}
+	e.gw, err = gateway.New(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

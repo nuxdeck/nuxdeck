@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc"
@@ -47,10 +48,18 @@ func (g *Gateway) Revoke(ctx context.Context, actor Actor, agentID string) error
 	return nil
 }
 
+// authenticated is the agent a stream belongs to and the certificate serial it presented.
+type authenticated struct {
+	agentID string
+	serial  string
+}
+
 // authenticate maps the verified client certificate to an enrolled, unrevoked agent.
 // It fails closed: no certificate, an unknown agent or a denied serial all end here.
-func (g *Gateway) authenticate(ctx context.Context) (string, error) {
-	deny := func() (string, error) { return "", status.Error(codes.Unauthenticated, string(errcode.GWAuth001)) }
+func (g *Gateway) authenticate(ctx context.Context) (authenticated, error) {
+	deny := func() (authenticated, error) {
+		return authenticated{}, status.Error(codes.Unauthenticated, string(errcode.GWAuth001))
+	}
 
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -61,8 +70,9 @@ func (g *Gateway) authenticate(ctx context.Context) (string, error) {
 		return deny()
 	}
 	leaf := ti.State.VerifiedChains[0][0]
+	serial := leaf.SerialNumber.Text(16)
 	id, ok := pki.AgentIDFromCert(leaf)
-	if !ok || g.deny.has(leaf.SerialNumber.Text(16)) {
+	if !ok || g.deny.has(serial) {
 		return deny()
 	}
 	info, err := g.o.Repo.AgentByID(ctx, id)
@@ -71,30 +81,39 @@ func (g *Gateway) authenticate(ctx context.Context) (string, error) {
 		return deny()
 	case err != nil:
 		g.log.Error("look up agent", "agent_id", id, "error", err)
-		return "", status.Error(codes.Internal, string(errcode.APIInt001))
+		return authenticated{}, status.Error(codes.Internal, string(errcode.APIInt001))
 	case info.Revoked:
 		return deny()
 	}
-	return id, nil
+	return authenticated{agentID: id, serial: serial}, nil
 }
 
 // Connect is the agent's long-lived stream. After Hello it expects a heartbeat at
 // least every MissedHeartbeats intervals and treats silence as a disconnect.
 func (g *Gateway) Connect(stream grpc.BidiStreamingServer[agentv1.AgentMessage, agentv1.ServerMessage]) error {
 	ctx := stream.Context()
-	agentID, err := g.authenticate(ctx)
+	auth, err := g.authenticate(ctx)
 	if err != nil {
 		return err
 	}
+	agentID := auth.agentID
 
 	msgs, recvErr := readMessages(stream)
 	if err := g.expectHello(ctx, stream, msgs, recvErr); err != nil {
 		return err
 	}
 
-	sess := newSession(agentID)
+	now := g.o.Now()
+	sess := newSession(agentID, peerIP(ctx), now)
 	if old := g.reg.add(sess); old != nil {
 		old.close(reasonReplaced)
+		g.checkIdentityConflict(ctx, old, sess)
+	}
+	// Revoke sets the deny list before it looks for a live session. A revocation that
+	// landed after authenticate but before add found no session to close, so check again here.
+	if g.deny.has(auth.serial) {
+		g.reg.remove(sess)
+		return g.reject(stream, reasonRevoked)
 	}
 	log := g.log.With("agent_id", agentID)
 	log.Info("agent connected")
@@ -121,10 +140,22 @@ func (g *Gateway) Connect(stream grpc.BidiStreamingServer[agentv1.AgentMessage, 
 	window := MissedHeartbeats * g.o.Heartbeat
 	timer := time.NewTimer(window)
 	defer timer.Stop()
-	lastTouch := g.o.Now()
+	lastTouch := now
+	limiter := newTokenBucket(g.o.MessageRate, g.o.MessageBurst, g.o.Now)
+	dropped := 0
 	for {
 		select {
 		case m := <-msgs:
+			if !limiter.allow() {
+				// Dropped messages never reach the hooks, so one flooding stream cannot slow other agents.
+				dropped++
+				if dropped >= g.o.MaxDroppedMsgs {
+					g.floodClosed(ctx, log, sess, dropped)
+					return g.reject(stream, reasonFlooding)
+				}
+				continue
+			}
+			sess.seen(g.o.Now())
 			if g.o.OnMessage != nil {
 				g.o.OnMessage(agentID, m)
 			}
@@ -164,6 +195,22 @@ func (g *Gateway) Connect(stream grpc.BidiStreamingServer[agentv1.AgentMessage, 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+// floodClosed records that a stream was closed for sending too fast. The log and audit entry
+// carry counts and addresses only, never message contents.
+func (g *Gateway) floodClosed(ctx context.Context, log *slog.Logger, sess *session, dropped int) {
+	log.Warn("agent stream closed for message flood", "dropped", dropped, "peer_ip", sess.peerIP)
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	ev := audit.Event{
+		ActorType: "agent", ActorID: sess.agentID, Action: actionStreamFlooded,
+		TargetType: "agent", TargetID: sess.agentID, IP: sess.peerIP, Result: audit.ResultFailure,
+		Details: map[string]any{"dropped": dropped, "code": string(errcode.GWStr005)},
+	}
+	if err := g.o.Repo.RecordAudit(auditCtx, ev); err != nil {
+		log.Error("record message flood audit", "error", err)
 	}
 }
 

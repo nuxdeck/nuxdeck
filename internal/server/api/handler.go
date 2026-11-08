@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -78,6 +79,9 @@ type Options struct {
 	Accounts *auth.Accounts
 	// OIDC enables single sign-on and its settings; it needs Auth.
 	OIDC *auth.OIDC
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For header identifies the client
+	// (server.trusted_proxies). Nil trusts no proxy.
+	TrustedProxies []*net.IPNet
 }
 
 // Handler returns the full HTTP handler with its middleware.
@@ -155,7 +159,7 @@ func Handler(o Options) http.Handler {
 		writeError(w, http.StatusNotFound, errcode.APINF001)
 	})
 
-	return recoverer(o.Log, withRequestID(securityHeaders(accessLog(o.Log, mux))))
+	return withClientIP(o.TrustedProxies, recoverer(o.Log, withRequestID(securityHeaders(accessLog(o.Log, mux)))))
 }
 
 func auditStoreOf(o Options) AuditStore {

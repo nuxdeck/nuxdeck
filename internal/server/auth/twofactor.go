@@ -283,7 +283,8 @@ func (s *Service) VerifyTOTP(ctx context.Context, rawTicket, code string, c Clie
 		return nil, nil, errcode.New(errcode.AuthTOTP002, "two-factor is not configured")
 	}
 	key := "totp:" + t.userID + "|" + c.IP
-	if s.limiter.Blocked(c.IP) || s.lockout.Blocked(key) {
+	accountKey := "totp:" + t.userID
+	if s.limiter.Blocked(c.IP) || s.lockout.Blocked(key) || s.accountGuard.Blocked(accountKey) {
 		return nil, nil, errcode.New(errcode.AuthLock001, "too many failed attempts")
 	}
 	user, err := acc.repo.AccountByID(ctx, t.userID)
@@ -311,14 +312,16 @@ func (s *Service) VerifyTOTP(ctx context.Context, rawTicket, code string, c Clie
 	if !ok {
 		s.tickets.miss(rawTicket)
 		s.lockout.Fail(key)
+		s.accountGuard.Fail(accountKey)
 		s.limiter.Fail(c.IP)
 		s.auditFail(ctx, user.ID, c, "auth.totp_failed", "bad_code")
-		if s.lockout.Blocked(key) {
+		if s.lockout.Blocked(key) || s.accountGuard.Blocked(accountKey) {
 			s.auditFail(ctx, user.ID, c, "auth.locked", "totp_failures")
 		}
 		return nil, nil, errcode.New(errcode.AuthTOTP001, "code rejected")
 	}
 	s.tickets.consume(rawTicket)
+	s.accountGuard.Reset(accountKey)
 	in, err = s.startSession(ctx, user.User, c, "password+totp")
 	return in, recovery, err
 }

@@ -54,6 +54,11 @@ type Server struct {
 	// PublicURL is the https base URL users open, used for deep links in alert messages. Empty
 	// means https://<host name of this machine>:<port of http.https_addr>.
 	PublicURL string `yaml:"public_url"`
+	// TrustedProxies lists the CIDR ranges of reverse proxies whose X-Forwarded-For header nuxd
+	// believes. Empty (the default) ignores the header, so every client is identified by its
+	// direct peer address. Set it when nuxd sits behind a proxy, or every user shares one address
+	// and the per-address sign-in limits lock them all out together.
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // Alerting tunes the notification queue and reminders.
@@ -187,6 +192,9 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	set(&cfg.Gateway.Addr, "NUXD_GATEWAY_ADDR")
 	set(&cfg.Gateway.PublicURL, "NUXD_GATEWAY_PUBLIC_URL")
 	set(&cfg.Server.PublicURL, "NUXD_PUBLIC_URL")
+	if v := getenv("NUXD_TRUSTED_PROXIES"); v != "" {
+		cfg.Server.TrustedProxies = splitList(v)
+	}
 	if v := getenv("NUXD_CHECKS_BLOCK_PRIVATE"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -213,6 +221,30 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		}
 	}
 	return nil
+}
+
+// ParseTrustedProxies parses server.trusted_proxies. Each entry must be a CIDR; a bare address
+// is refused so that a typo cannot silently trust one host more than intended.
+func ParseTrustedProxies(entries []string) ([]*net.IPNet, error) {
+	nets := make([]*net.IPNet, 0, len(entries))
+	for _, e := range entries {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(e))
+		if err != nil {
+			return nil, errcode.New(errcode.SRVCfg002, "server.trusted_proxies entry %q must be a CIDR range such as 10.0.0.0/8", e)
+		}
+		nets = append(nets, n)
+	}
+	return nets, nil
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // Validate checks the settings and returns the first problem with its code.
@@ -268,6 +300,9 @@ func (c Config) Validate() error {
 	}
 	if c.Alerting.Workers < 1 || c.Alerting.Workers > 64 {
 		return errcode.New(errcode.SRVCfg002, "alerting.workers must be from 1 to 64, got %d", c.Alerting.Workers)
+	}
+	if _, err := ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
+		return err
 	}
 	for _, h := range c.TLS.Hostnames {
 		if strings.ContainsAny(h, " /@:") {

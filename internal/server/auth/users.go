@@ -42,6 +42,9 @@ type Accounts struct {
 	now       func() time.Time
 	// guard limits password and code guesses on the self-service endpoints, per user.
 	guard *Limiter
+	// afterPasswordReset clears a sign-in back-off once an administrator has reset the password,
+	// so the account owner can sign in with the new password without waiting it out.
+	afterPasswordReset func(email, userID string)
 }
 
 // NewAccounts validates cfg.
@@ -193,7 +196,13 @@ func (a *Accounts) ResetUser(ctx context.Context, p Principal, id, newPassword s
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	return mapUserErr(a.repo.ResetAccount(ctx, id, hash, actor(p, "users.reset", "user", id, c, nil)))
+	if err := mapUserErr(a.repo.ResetAccount(ctx, id, hash, actor(p, "users.reset", "user", id, c, nil))); err != nil {
+		return err
+	}
+	if a.afterPasswordReset != nil {
+		a.afterPasswordReset(acc.Email, id)
+	}
+	return nil
 }
 
 func mapUserErr(err error) error {

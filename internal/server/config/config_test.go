@@ -123,3 +123,26 @@ func TestUPT_ChecksSettings(t *testing.T) {
 		t.Errorf("negative concurrency accepted: %v", err)
 	}
 }
+
+func TestTrustedProxy_ConfigLoad(t *testing.T) {
+	cfg, err := Load("", false, env(map[string]string{"NUXD_TRUSTED_PROXIES": "10.0.0.0/8, 2001:db8::/32"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Server.TrustedProxies) != 2 {
+		t.Fatalf("trusted proxies = %v", cfg.Server.TrustedProxies)
+	}
+	nets, err := ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil || len(nets) != 2 {
+		t.Fatalf("parse: %v %v", nets, err)
+	}
+
+	for _, bad := range []string{"10.0.0.1", "not-a-range", "10.0.0.0/33"} {
+		if _, err := Load("", false, env(map[string]string{"NUXD_TRUSTED_PROXIES": bad})); err == nil {
+			t.Errorf("NUXD_TRUSTED_PROXIES=%q must be refused at load", bad)
+		}
+	}
+	if cfg, err := Load("", false, env(nil)); err != nil || len(cfg.Server.TrustedProxies) != 0 {
+		t.Errorf("default must trust no proxy: %v %v", cfg.Server.TrustedProxies, err)
+	}
+}

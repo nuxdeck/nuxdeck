@@ -4,6 +4,8 @@ package gateway
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/nuxdeck/nuxdeck/internal/errcode"
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
@@ -20,12 +22,16 @@ var (
 	reasonShuttingDown = closeReason{agentv1.Disconnect_REASON_SHUTTING_DOWN, ""}
 	reasonReplaced     = closeReason{agentv1.Disconnect_REASON_UNSPECIFIED, errcode.GWStr003}
 	reasonProtocol     = closeReason{agentv1.Disconnect_REASON_PROTOCOL_ERROR, errcode.GWStr001}
+	reasonFlooding     = closeReason{agentv1.Disconnect_REASON_PROTOCOL_ERROR, errcode.GWStr005}
 )
 
 // session is one live agent stream. Only the Connect handler's goroutine sends on
 // the gRPC stream; other goroutines ask it to by closing the session or queueing.
 type session struct {
 	agentID string
+	peerIP  string
+	// lastSeen is the Unix nanosecond time of the last message, read by the next session for the same agent.
+	lastSeen atomic.Int64
 
 	once    sync.Once
 	closing chan struct{}
@@ -33,9 +39,15 @@ type session struct {
 	outbox  chan *agentv1.ServerMessage
 }
 
-func newSession(agentID string) *session {
-	return &session{agentID: agentID, closing: make(chan struct{}), outbox: make(chan *agentv1.ServerMessage, 16)}
+func newSession(agentID, peerIP string, now time.Time) *session {
+	s := &session{agentID: agentID, peerIP: peerIP, closing: make(chan struct{}), outbox: make(chan *agentv1.ServerMessage, 16)}
+	s.lastSeen.Store(now.UnixNano())
+	return s
 }
+
+func (s *session) seen(at time.Time) { s.lastSeen.Store(at.UnixNano()) }
+
+func (s *session) lastSeenAt() time.Time { return time.Unix(0, s.lastSeen.Load()) }
 
 // close asks the handler to send Disconnect and end the stream. Later calls are ignored.
 func (s *session) close(r closeReason) {

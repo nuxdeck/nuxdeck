@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -109,12 +110,21 @@ func New(o Options) *Service {
 	}
 	if o.Client == nil {
 		o.Client = &http.Client{
-			Timeout: sendTimeout,
+			Timeout:   sendTimeout,
+			Transport: telemetryTransport(),
 			// A report goes to one fixed host; following a redirect would send it somewhere else.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	}
 	return &Service{o: o, started: o.Now()}
+}
+
+// telemetryTransport is the default transport with an explicit TLS 1.2 floor, so the floor
+// does not depend on the Go release. The cipher suites stay at the Go defaults.
+func telemetryTransport() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	return tr
 }
 
 // Locked reports whether the environment forces telemetry off.

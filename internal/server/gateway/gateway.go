@@ -47,6 +47,13 @@ const (
 	enrolFailureWindow = 5 * time.Minute
 	maxTokenBytes      = 1024
 	maxCSRBytes        = 8 << 10
+
+	// Defaults for Options: a healthy agent sends a heartbeat every 10 s and some metric and
+	// inventory batches, far below the steady rate; the burst absorbs an inventory snapshot.
+	DefaultMessageRate     = 50.0
+	DefaultMessageBurst    = 500
+	DefaultMaxDroppedMsgs  = 1000
+	identityConflictWindow = 10 * time.Minute
 )
 
 // ErrAgentNotFound is returned by a Repository for an unknown agent ID.
@@ -69,6 +76,8 @@ type Repository interface {
 	// agent was already revoked, in which case nothing is written.
 	RevokeAgent(ctx context.Context, id string, at time.Time, ev audit.Event) (serials []string, changed bool, err error)
 	TouchAgent(ctx context.Context, id string, at time.Time) error
+	// RecordAudit appends ev to the audit log in its own transaction.
+	RecordAudit(ctx context.Context, ev audit.Event) error
 }
 
 // Enroller redeems an enrolment token; *pki.Service implements it.
@@ -97,8 +106,26 @@ type Options struct {
 	OnMessage func(agentID string, m *agentv1.AgentMessage)
 	// OnPresence is told when an agent goes online or offline. It must not block.
 	OnPresence func(agentID string, online bool)
+	// MessageRate is the steady number of messages per second one agent stream may send; zero means
+	// DefaultMessageRate. MessageBurst is how many may arrive at once; zero means DefaultMessageBurst.
+	MessageRate  float64
+	MessageBurst int
+	// MaxDroppedMsgs is how many messages one stream may have dropped over its life before the
+	// server closes it with GW-STR-005; zero means DefaultMaxDroppedMsgs.
+	MaxDroppedMsgs int
+	// OnIdentityConflict is told when an agent identity reconnects from a different address while its
+	// previous stream was still live. It runs on the new stream's goroutine and must not block.
+	OnIdentityConflict func(IdentityConflict)
 	// Now supplies the clock; nil means time.Now.
 	Now func() time.Time
+}
+
+// IdentityConflict describes one agent identity seen from two addresses (docs/04-security.md, T3).
+type IdentityConflict struct {
+	AgentID    string
+	PreviousIP string
+	CurrentIP  string
+	At         time.Time
 }
 
 // Gateway serves the AgentGateway gRPC service.
@@ -120,6 +147,15 @@ func New(ctx context.Context, o Options) (*Gateway, error) {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.MessageRate <= 0 {
+		o.MessageRate = DefaultMessageRate
+	}
+	if o.MessageBurst <= 0 {
+		o.MessageBurst = DefaultMessageBurst
+	}
+	if o.MaxDroppedMsgs <= 0 {
+		o.MaxDroppedMsgs = DefaultMaxDroppedMsgs
 	}
 	g := &Gateway{o: o, log: o.Log, reg: newRegistry(), deny: newDenyList(), limiter: auth.NewLimiter(enrolFailureLimit, enrolFailureWindow, o.Now)}
 

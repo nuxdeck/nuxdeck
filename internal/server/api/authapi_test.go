@@ -105,7 +105,8 @@ func newAuthEnv(t *testing.T) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := &testClock{now: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+	// The store judges session expiry by the wall clock, so a fixed past date makes every session expire.
+	clock := &testClock{now: time.Now().UTC().Truncate(time.Second)}
 	chk := checks.New(checks.Options{
 		DB: db, Secrets: box, Agents: db, Log: log, Inline: true, Clock: clock,
 		Exec: func(context.Context, probe.Policy, probe.Spec) probe.Result {

@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,7 +166,10 @@ func NewOIDC(cfg OIDCConfig) (*OIDC, error) {
 		cfg.Now = time.Now
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: oidcHTTPTimeout}
+		// The identity provider gets an explicit TLS 1.2 floor rather than relying on the Go default.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		cfg.HTTPClient = &http.Client{Timeout: oidcHTTPTimeout, Transport: transport}
 	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	return &OIDC{cfg: cfg}, nil

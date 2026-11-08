@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -663,5 +664,24 @@ func TestOIDCSaveValidation(t *testing.T) { // ACC-3
 				t.Fatalf("err = %v, want a field error on %q", err, tt.field)
 			}
 		})
+	}
+}
+
+func TestOIDC_ProviderClientRequiresTLS12(t *testing.T) {
+	repo := newOIDCFakeRepo()
+	svc, err := NewService(context.Background(), Config{
+		Repo: repo, Hasher: NewHasherWithParams(8, 1, 1), Passwords: NewPasswordPolicy(),
+		SetupToken: NewSetupToken(t.TempDir()), Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := NewOIDC(OIDCConfig{Repo: repo, Service: svc, PublicURL: testPublic, Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := o.cfg.HTTPClient.Transport.(*http.Transport)
+	if !ok || tr.TLSClientConfig == nil || tr.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("OIDC client transport must set MinVersion TLS 1.2, got %+v", o.cfg.HTTPClient.Transport)
 	}
 }

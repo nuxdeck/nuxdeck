@@ -5,6 +5,7 @@ package gateway
 import (
 	"errors"
 	"testing"
+	"time"
 
 	agentv1 "github.com/nuxdeck/nuxdeck/proto/nuxdeck/agent/v1"
 )
@@ -15,7 +16,7 @@ func TestSendToAgent(t *testing.T) {
 	if err := g.SendToAgent("a1", msg); !errors.Is(err, ErrAgentOffline) {
 		t.Fatalf("unknown agent: %v", err)
 	}
-	s := newSession("a1")
+	s := newSession("a1", "", time.Now())
 	g.reg.add(s)
 	for range cap(s.outbox) {
 		if err := g.SendToAgent("a1", msg); err != nil {

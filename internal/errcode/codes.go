@@ -78,6 +78,7 @@ const (
 	GWStr002     Code = "GW-STR-002"
 	GWStr003     Code = "GW-STR-003"
 	GWStr004     Code = "GW-STR-004"
+	GWStr005     Code = "GW-STR-005"
 	SKGDeny001   Code = "SKG-DENY-001"
 	SKGUps001    Code = "SKG-UPS-001"
 	SKGUps002    Code = "SKG-UPS-002"
@@ -226,6 +227,7 @@ func Entries() []Entry {
 		{GWStr002, "Agent message too large", "An agent message exceeded the 4 MB limit.", "Update the agent; metric batches are split to stay under 1 MB."},
 		{GWStr003, "Replaced by a newer connection", "The same agent connected again, so the older stream was closed.", "Make sure only one agent runs per host."},
 		{GWStr004, "Agent heartbeats missed", "No heartbeat arrived for three intervals, so the stream was closed.", "Check the network path between the agent and nuxd."},
+		{GWStr005, "Agent sent too many messages", "The agent sent messages faster than the server accepts them, and the stream was closed after too many were dropped.", "Update the agent; a healthy agent sends a heartbeat every few seconds and batches its metrics."},
 		{SKGDeny001, "Request refused by nux-sockguard", "nux-sockguard forwards only a fixed list of read-only container API calls, and this was not one of them.", "Nothing to fix on the host; the agent never asks for anything outside the list."},
 		{SKGUps001, "Container runtime unreachable", "nux-sockguard could not get an answer from the Docker or Podman socket.", "Check that Docker or Podman is running and that nux-sg can read its socket (docker group, or --upstream)."},
 		{SKGUps002, "Container runtime response rejected", "The runtime's answer was too large or not in the expected shape, so it was not forwarded.", "Report the code and the runtime version; the response was dropped rather than passed on unfiltered."},
