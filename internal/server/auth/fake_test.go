@@ -43,10 +43,14 @@ func (f *fakeRepo) UserByEmail(_ context.Context, email string) (User, error) {
 	return User{}, ErrNotFound
 }
 
-func (f *fakeRepo) Roles(_ context.Context, id string) ([]Role, error) {
+func (f *fakeRepo) Bindings(_ context.Context, id string) ([]Binding, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.roles[id], nil
+	var out []Binding
+	for _, r := range f.roles[id] {
+		out = append(out, Binding{Role: r})
+	}
+	return out, nil
 }
 
 func (f *fakeRepo) CreateAdmin(_ context.Context, u User, ev audit.Event) error {

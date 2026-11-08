@@ -15,6 +15,9 @@ import (
 func TestAuthorize(t *testing.T) {
 	anon := Principal{}
 	admin := Principal{UserID: "u1", Roles: []Role{RoleAdmin}}
+	viewer := Principal{UserID: "u2", Roles: []Role{RoleViewer}}
+	operator := Principal{UserID: "u3", Roles: []Role{RoleOperator}}
+	roleless := Principal{UserID: "u4"} // signed in, but nothing binds a role to them
 	tests := []struct {
 		action   Action
 		who      Principal
@@ -28,8 +31,31 @@ func TestAuthorize(t *testing.T) {
 		{ActionLogout, admin, ""},
 		{ActionMeRead, anon, errcode.AuthDeny003},
 		{ActionMeRead, admin, ""},
-		{"hosts.read", admin, errcode.AuthDeny005}, // unknown actions fail closed, even for an admin
-		{"", admin, errcode.AuthDeny005},
+		{ActionInventoryRead, anon, errcode.AuthDeny003},
+		{ActionInventoryRead, viewer, ""},
+		{ActionInventoryRead, operator, ""},
+		{ActionInventoryRead, admin, ""},
+		{ActionInventoryRead, roleless, errcode.AuthDeny005},
+		{ActionEventsStream, anon, errcode.AuthDeny003},
+		{ActionEventsStream, viewer, ""},
+		{ActionEventsStream, roleless, errcode.AuthDeny005},
+		{ActionLogsStream, anon, errcode.AuthDeny003},
+		{ActionLogsStream, viewer, ""},
+		{ActionLogsStream, operator, ""},
+		{ActionLogsStream, admin, ""},
+		{ActionLogsStream, roleless, errcode.AuthDeny005},
+		{ActionItemMetaUpdate, anon, errcode.AuthDeny003},
+		{ActionItemMetaUpdate, viewer, errcode.AuthDeny005},
+		{ActionItemMetaUpdate, roleless, errcode.AuthDeny005},
+		{ActionItemMetaUpdate, operator, ""},
+		{ActionItemMetaUpdate, admin, ""},
+		{ActionSearch, anon, errcode.AuthDeny003},
+		{ActionSearch, viewer, ""},
+		{ActionSearch, roleless, errcode.AuthDeny005},
+		{ActionAgentRevoke, viewer, errcode.AuthDeny005}, // admin-only actions stay out of a viewer's reach
+		{ActionAgentTokenCreate, operator, errcode.AuthDeny005},
+		{"hosts.read", admin, errcode.AuthRBAC001}, // unknown actions fail closed, even for an admin
+		{"", admin, errcode.AuthRBAC001},
 	}
 	for _, tt := range tests {
 		err := Authorize(tt.who, tt.action)

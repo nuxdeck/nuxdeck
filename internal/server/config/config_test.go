@@ -96,3 +96,30 @@ func TestLoadErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretsKeyFile(t *testing.T) {
+	cfg, err := Load("", false, env(map[string]string{"NUXD_MASTER_KEY_FILE": "/run/secrets/nuxd.key"}))
+	if err != nil || cfg.Secrets.MasterKeyFile != "/run/secrets/nuxd.key" {
+		t.Fatalf("got %+v, %v", cfg.Secrets, err)
+	}
+	if _, err := Load("", false, env(map[string]string{"NUXD_MASTER_KEY_FILE": "relative.key"})); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("relative key path accepted: %v", err)
+	}
+}
+
+func TestUPT_ChecksSettings(t *testing.T) {
+	cfg, err := Load("", false, env(nil))
+	if err != nil || cfg.Checks.BlockPrivate || cfg.Checks.MaxConcurrent != 0 {
+		t.Fatalf("defaults = %+v, %v", cfg.Checks, err)
+	}
+	cfg, err = Load(writeFile(t, "checks:\n  block_private: false\n  max_concurrent: 8\n"), true, env(map[string]string{"NUXD_CHECKS_BLOCK_PRIVATE": "true"}))
+	if err != nil || !cfg.Checks.BlockPrivate || cfg.Checks.MaxConcurrent != 8 {
+		t.Fatalf("got %+v, %v", cfg.Checks, err)
+	}
+	if _, err := Load("", false, env(map[string]string{"NUXD_CHECKS_BLOCK_PRIVATE": "maybe"})); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("bad bool accepted: %v", err)
+	}
+	if _, err := Load(writeFile(t, "checks:\n  max_concurrent: -1\n"), true, env(nil)); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("negative concurrency accepted: %v", err)
+	}
+}

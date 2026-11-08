@@ -1,0 +1,199 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Stylesheet of the public status page. Served from this origin so the page needs no inline styles. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #c4cbd6;
+  --text: #14181f;
+  --muted: #444e5e;
+  --ok: #14532d;
+  --ok-bg: #dcfce7;
+  --warn: #713f12;
+  --warn-bg: #fef3c7;
+  --crit: #7f1d1d;
+  --crit-bg: #fee2e2;
+  --unk: #374151;
+  --unk-bg: #e5e7eb;
+  --bar-ok: #16a34a;
+  --bar-warn: #d97706;
+  --bar-crit: #dc2626;
+  --bar-unk: #9ca3af;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116;
+    --surface: #161b22;
+    --border: #3a4350;
+    --text: #e6e9ee;
+    --muted: #b4bcc8;
+    --ok: #86efac;
+    --ok-bg: #0f2a1a;
+    --warn: #fde68a;
+    --warn-bg: #33270a;
+    --crit: #fecaca;
+    --crit-bg: #3a1212;
+    --unk: #d1d5db;
+    --unk-bg: #1f2630;
+    --bar-ok: #22c55e;
+    --bar-warn: #f59e0b;
+    --bar-crit: #ef4444;
+    --bar-unk: #6b7280;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+
+h2 {
+  margin: 32px 0 12px;
+  font-size: 18px;
+}
+
+h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.desc,
+.meta,
+.uptime {
+  color: var(--muted);
+}
+
+.overall {
+  display: inline-block;
+  margin: 12px 0 0;
+  padding: 8px 16px;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.st-operational {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.st-degraded {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.st-outage {
+  color: var(--crit);
+  background: var(--crit-bg);
+}
+
+.st-unknown {
+  color: var(--unk);
+  background: var(--unk-bg);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  margin: 0 0 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.badge {
+  padding: 2px 8px;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bars {
+  display: grid;
+  grid-template-columns: repeat(90, 1fr);
+  gap: 1px;
+  margin: 12px 0 4px;
+}
+
+.day {
+  display: block;
+  height: 28px;
+  border-radius: 1px;
+}
+
+.day.st-operational {
+  background: var(--bar-ok);
+}
+
+.day.st-degraded {
+  background: var(--bar-warn);
+}
+
+.day.st-outage {
+  background: var(--bar-crit);
+}
+
+.day.st-unknown {
+  background: var(--bar-unk);
+}
+
+.uptime,
+.meta {
+  margin: 0;
+  font-size: 13px;
+}
+
+.body {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.timeline {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.timeline li {
+  padding-top: 8px;
+}
+
+footer {
+  margin-top: 32px;
+  color: var(--muted);
+  font-size: 13px;
+}

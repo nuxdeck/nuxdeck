@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -24,8 +25,9 @@ func TestRun(t *testing.T) {
 		{"global flag before command", []string{"--server", "https://x.example", "version"}, noEnv, 0, "nux dev", ""},
 		{"no command", nil, noEnv, 2, "", string(errcode.CLIArg001)},
 		{"unknown command", []string{"frobnicate"}, noEnv, 2, "", string(errcode.CLIArg001)},
-		{"agent placeholder", []string{"agent"}, noEnv, 1, "", string(errcode.CLIArg003)},
-		{"login placeholder", []string{"login"}, noEnv, 1, "", string(errcode.CLIArg003)},
+		{"agent needs a subcommand", []string{"agent"}, noEnv, 2, "", string(errcode.CLIArg001)},
+		{"login needs a token source", []string{"login"}, noEnv, 2, "", string(errcode.CLIArg002)},
+		{"help lists remote commands", []string{"help"}, noEnv, 0, "Exit codes", ""},
 		{"bad shared setting", []string{"agent"}, func(k string) string {
 			if k == "NUX_SERVER" {
 				return "not a url"
@@ -38,7 +40,7 @@ func TestRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer
-			code := run(tt.args, &out, &errOut, tt.env)
+			code := run(context.Background(), tt.args, strings.NewReader(""), &out, &errOut, tt.env)
 			if code != tt.wantCode {
 				t.Errorf("exit = %d, want %d (stderr %q)", code, tt.wantCode, errOut.String())
 			}

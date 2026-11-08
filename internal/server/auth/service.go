@@ -29,6 +29,8 @@ const (
 	touchInterval          = time.Minute
 	maxFailuresPerWindow   = 10
 	failureWindow          = 5 * time.Minute
+	maxAccountFailures     = 5
+	accountLockWindow      = 15 * time.Minute
 	maxNameRunes           = 100
 	maxEmailLen            = 254
 	maxUserAgentLen        = 256
@@ -56,12 +58,16 @@ type Config struct {
 	// IdleTimeout (default 12 hours, ACC-6) and AbsoluteTimeout (default 7 days) bound a session.
 	IdleTimeout     time.Duration
 	AbsoluteTimeout time.Duration
+	// Accounts enables two-factor, API tokens and user management; nil means password-only sign-in.
+	Accounts *Accounts
 }
 
 // Service implements first-run setup, sign-in, sign-out and session lookup.
 type Service struct {
 	cfg       Config
 	limiter   *Limiter
+	lockout   *Limiter // per account and address (ACC-7)
+	tickets   *ticketStore
 	dummyHash string
 }
 
@@ -73,6 +79,8 @@ type SignedIn struct {
 	ExpiresAt time.Time
 	User      User
 	Roles     []Role
+	// Pending is set instead of a session when a second factor is still needed.
+	Pending *PendingLogin
 }
 
 // SetupRequest creates the first administrator.
@@ -105,7 +113,10 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{cfg: cfg, limiter: NewLimiter(maxFailuresPerWindow, failureWindow, cfg.Now), dummyHash: dummy}, nil
+	return &Service{
+		cfg: cfg, limiter: NewLimiter(maxFailuresPerWindow, failureWindow, cfg.Now), dummyHash: dummy,
+		lockout: NewLimiter(maxAccountFailures, accountLockWindow, cfg.Now), tickets: newTicketStore(cfg.Now),
+	}, nil
 }
 
 // SetupRequired reports whether no account exists yet.
@@ -180,6 +191,10 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 		return nil, errcode.New(errcode.AuthDeny002, "sign-in attempts from %s are rate limited", c.IP)
 	}
 	normalized, emailErr := normalizeEmail(email)
+	lockKey := normalized + "|" + c.IP
+	if emailErr == nil && s.lockout.Blocked(lockKey) {
+		return nil, errcode.New(errcode.AuthLock001, "account locked for this address")
+	}
 	if emailErr != nil || len(password) > maxPasswordBytes {
 		s.recordFailure(ctx, c, "auth.login_failed", "malformed_credentials", normalized)
 		return nil, errcode.New(errcode.AuthDeny001, "credentials rejected")
@@ -210,7 +225,7 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 	case !match:
 		s.recordFailure(ctx, c, "auth.login_failed", "bad_password", normalized)
 	default:
-		return s.startSession(ctx, user, c, "password")
+		return s.pendingLogin(ctx, user, c)
 	}
 	return nil, errcode.New(errcode.AuthDeny001, "credentials rejected")
 }
@@ -247,11 +262,11 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (Principal, *
 			sess.LastSeenAt = now
 		}
 	}
-	roles, err := s.cfg.Repo.Roles(ctx, user.ID)
+	bindings, err := s.cfg.Repo.Bindings(ctx, user.ID)
 	if err != nil {
-		return Principal{}, nil, fmt.Errorf("look up roles: %w", err)
+		return Principal{}, nil, fmt.Errorf("look up role bindings: %w", err)
 	}
-	return Principal{UserID: user.ID, Email: user.Email, Name: user.Name, Roles: roles}, &sess, nil
+	return Principal{UserID: user.ID, Email: user.Email, Name: user.Name, Roles: UnscopedRoles(bindings), Bindings: bindings, Via: "session"}, &sess, nil
 }
 
 // Logout ends the session.
@@ -287,17 +302,24 @@ func (s *Service) startSession(ctx context.Context, user User, c Client, method 
 	}); err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
-	roles, err := s.cfg.Repo.Roles(ctx, user.ID)
+	bindings, err := s.cfg.Repo.Bindings(ctx, user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("look up roles: %w", err)
+		return nil, fmt.Errorf("look up role bindings: %w", err)
 	}
-	return &SignedIn{Cookie: cookie, CSRFToken: csrf, ExpiresAt: sess.ExpiresAt, User: user, Roles: roles}, nil
+	return &SignedIn{Cookie: cookie, CSRFToken: csrf, ExpiresAt: sess.ExpiresAt, User: user, Roles: UnscopedRoles(bindings)}, nil
 }
 
 // recordFailure counts the failure against the caller's address and writes an
 // audit entry. A failure to audit is logged, not returned: the caller must still be refused.
 func (s *Service) recordFailure(ctx context.Context, c Client, action, reason, email string) {
 	s.limiter.Fail(c.IP)
+	if email != "" {
+		key := email + "|" + c.IP
+		s.lockout.Fail(key)
+		if s.lockout.Blocked(key) {
+			defer s.auditFail(ctx, "", c, "auth.locked", "login_failures")
+		}
+	}
 	details := map[string]any{"reason": reason}
 	if email != "" {
 		details["email"] = maskEmail(email)
