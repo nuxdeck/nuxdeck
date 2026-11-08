@@ -41,7 +41,12 @@ var (
 	thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
 	reserved    = netip.MustParsePrefix("240.0.0.0/4")
 	nat64       = netip.MustParsePrefix("64:ff9b::/96")
-	sixToFour   = netip.MustParsePrefix("2002::/16")
+	// RFC 8215 local-use NAT64: the IPv4 address may sit in the RFC 6052 /48 layout or in the trailing 32 bits.
+	localNAT64 = netip.MustParsePrefix("64:ff9b:1::/48")
+	sixToFour  = netip.MustParsePrefix("2002::/16")
+	// IPv4-compatible (deprecated ::/96). ::1 is excluded: it is IPv6 loopback, not 0.0.0.1.
+	v4Compatible = netip.MustParsePrefix("::/96")
+	loopbackV6   = netip.MustParseAddr("::1")
 	// Metadata endpoints of common clouds that are not link-local; blocked even when private ranges are allowed.
 	metadata = []netip.Addr{
 		netip.MustParseAddr("fd00:ec2::254"),   // AWS IPv6
@@ -53,7 +58,7 @@ var (
 // Check returns nil if p allows connecting to ip, and an error wrapping ErrBlocked otherwise.
 func (p Policy) Check(ip netip.Addr) error {
 	ip = ip.Unmap().WithZone("")
-	if embedded, ok := embeddedV4(ip); ok {
+	for _, embedded := range embeddedV4(ip) {
 		if err := p.Check(embedded); err != nil {
 			return err
 		}
@@ -89,19 +94,28 @@ func (p Policy) Check(ip netip.Addr) error {
 	return nil
 }
 
-// embeddedV4 extracts the IPv4 address that NAT64 and 6to4 prefixes smuggle inside an IPv6 one.
-func embeddedV4(ip netip.Addr) (netip.Addr, bool) {
-	if !ip.Is6() {
-		return netip.Addr{}, false
+// embeddedV4 lists the IPv4 addresses that an IPv6 address can reach by translation or
+// legacy embedding; every one of them must pass the policy. Under the RFC 6052 /48 layout of
+// the local-use NAT64 prefix, an all-zero reading is not a destination, so it is skipped.
+func embeddedV4(ip netip.Addr) []netip.Addr {
+	if !ip.Is6() || ip == loopbackV6 {
+		return nil
 	}
 	b := ip.As16()
+	trailing := netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
 	switch {
-	case nat64.Contains(ip):
-		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	case nat64.Contains(ip), v4Compatible.Contains(ip):
+		return []netip.Addr{trailing}
+	case localNAT64.Contains(ip):
+		rfc6052 := netip.AddrFrom4([4]byte{b[6], b[7], b[9], b[10]})
+		if rfc6052.IsUnspecified() {
+			return []netip.Addr{trailing}
+		}
+		return []netip.Addr{trailing, rfc6052}
 	case sixToFour.Contains(ip):
-		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
+		return []netip.Addr{netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]})}
 	}
-	return netip.Addr{}, false
+	return nil
 }
 
 func blocked(ip netip.Addr, why string) error {

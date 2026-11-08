@@ -120,6 +120,7 @@ Every error that reaches a user, a log reader or the API carries one of these co
 | `GW-STR-002` | Agent message too large | An agent message exceeded the 4 MB limit. | Update the agent; metric batches are split to stay under 1 MB. |
 | `GW-STR-003` | Replaced by a newer connection | The same agent connected again, so the older stream was closed. | Make sure only one agent runs per host. |
 | `GW-STR-004` | Agent heartbeats missed | No heartbeat arrived for three intervals, so the stream was closed. | Check the network path between the agent and nuxd. |
+| `GW-STR-005` | Agent sent too many messages | The agent sent messages faster than the server accepts them, and the stream was closed after too many were dropped. | Update the agent; a healthy agent sends a heartbeat every few seconds and batches its metrics. |
 | `GW-TOK-001` | Enrolment token not accepted | The enrolment token is unknown, expired or already used. | Create a new token in the UI; each token works once and expires after 1 hour. |
 | `LOG-SRC-001` | Log source unavailable | The agent cannot read this container's logs through nux-sockguard. | Check that the container exists, that nux-sockguard is running and that Docker or Podman is running. |
 | `LOG-SRC-002` | Journal unavailable | The agent cannot read the systemd journal for this unit. | Check that journalctl is installed on the host and that the agent's user may read the journal (systemd-journal group). |

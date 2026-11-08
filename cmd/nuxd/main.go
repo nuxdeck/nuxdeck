@@ -226,8 +226,12 @@ func serve(ctx context.Context, configPath string, explicit bool, stderr io.Writ
 	alertSvc, alertChannels, stopAlerting := startAlerting(ctx, db, secretBox, checkSvc, inv, mt, cfg, log)
 	defer stopAlerting()
 	verifyAuditAtStartup(ctx, db, log)
+	trusted, err := config.ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil {
+		return err
+	}
 	handler := api.Handler(api.Options{
-		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, Accounts: accounts, StatusPages: statusSvc, Telemetry: telSvc,
+		Log: log, Ready: db, Version: version, UI: ui, Auth: svc, Accounts: accounts, StatusPages: statusSvc, Telemetry: telSvc, TrustedProxies: trusted,
 		PKI: pkiSvc, GatewayURL: gwURL, Revoker: gw, Inventory: inv, Metrics: mt, Checks: checkSvc, Logs: logBroker, Audit: db, Alerting: alertSvc, Channels: alertChannels, RoleBindings: db,
 		OIDC: oidcSvc,
 	})
