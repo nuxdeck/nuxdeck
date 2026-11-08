@@ -1,4 +1,4 @@
-.PHONY: lint test build web vuln licences release-check dev dev-agent proto api api-check e2e release-snapshot bench load load-full
+.PHONY: lint test build web vuln licences release-check dev dev-agent proto api api-check e2e e2e-up e2e-down release-snapshot bench load load-full
 
 web/node_modules: web/package-lock.json
 	cd web && npm ci
@@ -66,8 +66,18 @@ api-check:
 	if [ $$status -ne 0 ]; then echo "api-check: generated code is stale; run make api and commit the result" >&2; fi; \
 	exit $$status
 
+# e2e builds an isolated Docker Compose stack, runs the Go scenarios (test/e2e, build tag e2e) and
+# the Playwright suite when test/e2e/ui exists, then tears the stack down whatever happened.
 e2e:
-	@echo "make e2e: not implemented yet (NUX-44)" >&2; exit 1
+	bash test/e2e/run.sh
+
+# e2e-up and e2e-down start and remove the stack for iteration. The stack is recorded in
+# test/e2e/.stack, so e2e-down must run before another e2e-up.
+e2e-up:
+	bash test/e2e/stack-up.sh
+
+e2e-down:
+	bash test/e2e/stack-down.sh
 
 # bench runs the resource-budget tests (NFR-1 collector budget) and the server ingest benchmark.
 # It runs without -race, because the budgets measure CPU and allocations.
