@@ -92,11 +92,13 @@ func TestM3_StoppedServiceAlertsAndResolves(t *testing.T) {
 	if _, err := s.compose(ctx, "start", failingService); err != nil {
 		t.Fatalf("start %s: %v", failingService, err)
 	}
+	t.Cleanup(func() { s.logCheckState(context.Background(), t, checkID) })
 	startedAt := time.Now()
-	eventually(t, alertBound, "the alert to resolve after the restart", func() (bool, string, error) {
+	resolveWait := eventually(t, alertBound, "the alert to resolve after the restart", func() (bool, string, error) {
 		open, detail, err := s.alertOpen(ctx, rule.ID)
 		return !open, detail, err
 	})
+	_ = resolveWait
 	t.Logf("alert resolved %s after the restart", time.Since(startedAt))
 }
 
@@ -222,4 +224,16 @@ func (r *webhookReceiver) saw(text string) (bool, string, error) {
 			return false, "no matching notification yet", nil
 		}
 	}
+}
+
+// logCheckState records the check's status and the rule's alerts in the test log, so a failed
+// resolve shows what the engine saw.
+func (s *stack) logCheckState(ctx context.Context, t testing.TB, checkID string) {
+	t.Helper()
+	resp, err := s.admin.call(ctx, http.MethodGet, "/api/v1/checks/"+checkID, nil, nil)
+	if err != nil {
+		t.Logf("check state unreadable: %v", err)
+		return
+	}
+	t.Logf("check %s final: %s", checkID, string(resp.Body))
 }

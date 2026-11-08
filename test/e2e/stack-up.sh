@@ -74,5 +74,8 @@ E2E_ADMIN_EMAIL='$admin_email'
 E2E_ADMIN_PASSWORD='$admin_password'
 E2E_CA_PEM='$stack_dir/ca.pem'
 ENV
-chmod 0600 "$stack_dir/env" "$stack_dir/compose.env" "$stack_dir/backup-passphrase"
+# The backup container runs as uid 65532 and reads the passphrase through a bind mount, so the
+# file must be readable by that user. It is per-run, git-ignored and deleted by stack-down.sh.
+chmod 0600 "$stack_dir/env" "$stack_dir/compose.env"
+chmod 0644 "$stack_dir/backup-passphrase"
 echo "e2e: stack $project is up at https://localhost:$https_port (env in $stack_dir/env)"

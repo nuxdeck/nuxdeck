@@ -53,6 +53,13 @@ func TestINV1_InventoryDiscoversHostsAndContainers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list containers: %v", err)
 	}
+	for _, r := range rows {
+		for _, id := range append(append([]string{}, s.nginx...), s.failing...) {
+			if r.ID == id {
+				t.Logf("inventory record %s name=%q host=%s state=%q", r.ID, r.Name, r.HostID, r.State)
+			}
+		}
+	}
 	if !anyRunning(rows, s.nginx) {
 		t.Errorf("nginx container is not listed as running on any host")
 	}
