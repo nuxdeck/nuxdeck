@@ -114,6 +114,8 @@
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const anchor = (event.target as Element | null)?.closest('a');
     if (!anchor || anchor.target || anchor.hasAttribute('download')) return;
+    // In-page links (the skip link) stay with the browser, which moves focus to their target.
+    if (anchor.getAttribute('href')?.startsWith('#')) return;
     const url = new URL(anchor.href, window.location.href);
     if (url.origin !== window.location.origin) return;
     event.preventDefault();
@@ -186,6 +188,13 @@
     flex: 1;
     min-width: 0;
     padding: var(--space-6);
+  }
+
+  /* Narrow screens keep a smaller gutter so toolbars and filters fit at 320 CSS px (WCAG 1.4.10). */
+  @media (max-width: 40rem) {
+    main {
+      padding: var(--space-3);
+    }
   }
 
   main:focus {

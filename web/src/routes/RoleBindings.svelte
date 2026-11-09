@@ -144,33 +144,35 @@
     {:else if items.length === 0}
       <p>No role bindings yet.</p>
     {:else}
-      <table>
-        <caption class="sr-only">Role bindings</caption>
-        <thead>
-          <tr
-            ><th scope="col">Who</th><th scope="col">Role</th><th scope="col">Scope</th><th
-              scope="col"><span class="sr-only">Actions</span></th
-            ></tr
-          >
-        </thead>
-        <tbody>
-          {#each items as b (b.id)}
-            <tr>
-              <td>{b.subject_type === 'user' ? 'User' : 'Group'} <code>{b.subject}</code></td>
-              <td>{b.role}</td>
-              <td>
-                {describeScope(b.scope)}
-                {#if b.invalid}<strong> (unreadable scope: grants nothing)</strong>{/if}
-              </td>
-              <td>
-                <Button variant="secondary" disabled={busy} onclick={() => remove(b)}>
-                  Remove<span class="sr-only"> {b.role} for {b.subject}</span>
-                </Button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Role bindings</caption>
+          <thead>
+            <tr
+              ><th scope="col">Who</th><th scope="col">Role</th><th scope="col">Scope</th><th
+                scope="col"><span class="sr-only">Actions</span></th
+              ></tr
+            >
+          </thead>
+          <tbody>
+            {#each items as b (b.id)}
+              <tr>
+                <td>{b.subject_type === 'user' ? 'User' : 'Group'} <code>{b.subject}</code></td>
+                <td>{b.role}</td>
+                <td>
+                  {describeScope(b.scope)}
+                  {#if b.invalid}<strong> (unreadable scope: grants nothing)</strong>{/if}
+                </td>
+                <td>
+                  <Button variant="secondary" disabled={busy} onclick={() => remove(b)}>
+                    Remove<span class="sr-only"> {b.role} for {b.subject}</span>
+                  </Button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
 
     <h3 id="rb-add">Add a role binding</h3>

@@ -44,10 +44,13 @@
 </div>
 
 <style>
+  /* Capped to the container: a select's long option text would otherwise set the width (WCAG 1.4.10). */
   .field {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-1);
     min-width: 0;
+    max-width: 100%;
   }
 
   label {
@@ -55,6 +58,7 @@
   }
 
   select {
+    max-width: 100%;
     min-height: var(--target-size);
     padding: var(--space-1) var(--space-3);
     border: 1px solid var(--color-border-strong);

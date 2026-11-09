@@ -108,50 +108,52 @@
 
 <section aria-labelledby="list-h">
   <h2 id="list-h">Accounts</h2>
-  <table>
-    <thead>
-      <tr
-        ><th>Name</th><th>Email</th><th>Role</th><th>Two-factor</th><th>Status</th><th
-          ><span class="sr-only">Actions</span></th
-        ></tr
-      >
-    </thead>
-    <tbody>
-      {#each users as u (u.id)}
-        <tr>
-          <td
-            >{u.name}{#if u.id === auth.user?.id}
-              <em>(you)</em>{/if}</td
-          >
-          <td>{u.email}</td>
-          <td>
-            <select
-              aria-label={`Role of ${u.email}`}
-              value={u.role}
-              onchange={(e) =>
-                void run(() => api.updateUser(u.id, { role: e.currentTarget.value }))}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr
+          ><th>Name</th><th>Email</th><th>Role</th><th>Two-factor</th><th>Status</th><th
+            ><span class="sr-only">Actions</span></th
+          ></tr
+        >
+      </thead>
+      <tbody>
+        {#each users as u (u.id)}
+          <tr>
+            <td
+              >{u.name}{#if u.id === auth.user?.id}
+                <em>(you)</em>{/if}</td
             >
-              {#each ROLE_OPTIONS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
-            </select>
-          </td>
-          <td>{u.totp_enabled ? 'on' : 'off'}</td>
-          <td>{u.disabled ? 'disabled' : 'active'}</td>
-          <td class="actions">
-            <Button
-              variant="secondary"
-              onclick={() => void run(() => api.updateUser(u.id, { disabled: !u.disabled }))}
-            >
-              {u.disabled ? 'Enable' : 'Disable'}
-            </Button>
-            <Button variant="secondary" onclick={() => ((resetting = u), (resetFailure = null))}
-              >Reset</Button
-            >
-            <Button variant="secondary" onclick={() => remove(u)}>Delete</Button>
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+            <td>{u.email}</td>
+            <td>
+              <select
+                aria-label={`Role of ${u.email}`}
+                value={u.role}
+                onchange={(e) =>
+                  void run(() => api.updateUser(u.id, { role: e.currentTarget.value }))}
+              >
+                {#each ROLE_OPTIONS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+              </select>
+            </td>
+            <td>{u.totp_enabled ? 'on' : 'off'}</td>
+            <td>{u.disabled ? 'disabled' : 'active'}</td>
+            <td class="actions">
+              <Button
+                variant="secondary"
+                onclick={() => void run(() => api.updateUser(u.id, { disabled: !u.disabled }))}
+              >
+                {u.disabled ? 'Enable' : 'Disable'}
+              </Button>
+              <Button variant="secondary" onclick={() => ((resetting = u), (resetFailure = null))}
+                >Reset</Button
+              >
+              <Button variant="secondary" onclick={() => remove(u)}>Delete</Button>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 {#if resetting}

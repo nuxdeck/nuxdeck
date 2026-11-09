@@ -8,6 +8,7 @@ lint: web/node_modules
 	golangci-lint run ./...
 	go run github.com/bufbuild/buf/cmd/buf@v1.75.0 lint
 	cd web && npm run lint && npm run check
+	cd test/e2e/ui && npm run lint
 
 test: web/node_modules
 	go test -race ./...

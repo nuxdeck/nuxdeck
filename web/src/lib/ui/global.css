@@ -61,6 +61,8 @@ kbd {
 
 /* Tables: row height follows the density token; wide tables scroll inside their wrapper, not the page. */
 .table-wrap {
+  /* Containing block for visually-hidden text inside cells; without it that text escapes the scroll box and widens the page. */
+  position: relative;
   overflow-x: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-2);

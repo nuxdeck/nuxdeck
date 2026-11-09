@@ -66,12 +66,14 @@
 </header>
 
 <style>
+  /* The bar grows and wraps instead of widening the page on narrow screens (WCAG 1.4.10). */
   .topbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-    height: var(--topbar-height);
-    padding: 0 var(--space-3);
+    min-height: var(--topbar-height);
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
   }
@@ -88,6 +90,9 @@
   }
 
   .user {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--target-size);
     color: var(--color-text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -146,5 +151,12 @@
   .icon-button:hover {
     background: var(--color-surface-sunken);
     border-color: var(--color-border);
+  }
+
+  @media (max-width: 40rem) {
+    .spacer,
+    kbd {
+      display: none;
+    }
   }
 </style>

@@ -228,33 +228,35 @@
 
 <section aria-labelledby="sess-h">
   <h2 id="sess-h">Sessions</h2>
-  <table>
-    <thead
-      ><tr
-        ><th>Started</th><th>Last active</th><th>Address</th><th>Browser</th><th
-          ><span class="sr-only">Actions</span></th
-        ></tr
-      ></thead
-    >
-    <tbody>
-      {#each sessions as s (s.id)}
-        <tr>
-          <td
-            >{formatTime(s.created_at)}{#if s.current}
-              <strong>(this session)</strong>{/if}</td
-          >
-          <td>{formatTime(s.last_seen_at)}</td>
-          <td>{s.ip}</td>
-          <td class="ua">{s.user_agent}</td>
-          <td
-            ><Button variant="secondary" onclick={() => void revokeSession(s)}
-              >{s.current ? 'Sign out' : 'Revoke'}</Button
-            ></td
-          >
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead
+        ><tr
+          ><th>Started</th><th>Last active</th><th>Address</th><th>Browser</th><th
+            ><span class="sr-only">Actions</span></th
+          ></tr
+        ></thead
+      >
+      <tbody>
+        {#each sessions as s (s.id)}
+          <tr>
+            <td
+              >{formatTime(s.created_at)}{#if s.current}
+                <strong>(this session)</strong>{/if}</td
+            >
+            <td>{formatTime(s.last_seen_at)}</td>
+            <td>{s.ip}</td>
+            <td class="ua">{s.user_agent}</td>
+            <td
+              ><Button variant="secondary" onclick={() => void revokeSession(s)}
+                >{s.current ? 'Sign out' : 'Revoke'}</Button
+              ></td
+            >
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <section aria-labelledby="tok-h">
@@ -289,26 +291,30 @@
     <Button type="submit">Create token</Button>
   </form>
   {#if tokens.length}
-    <table>
-      <thead
-        ><tr
-          ><th>Name</th><th>Role</th><th>Expires</th><th>Last used</th><th
-            ><span class="sr-only">Actions</span></th
-          ></tr
-        ></thead
-      >
-      <tbody>
-        {#each tokens as t (t.id)}
-          <tr>
-            <td>{t.name}</td>
-            <td>{t.bindings.map((b) => b.role).join(', ')}</td>
-            <td>{formatTime(t.expires_at)}</td>
-            <td>{t.last_used_at ? formatTime(t.last_used_at) : 'never'}</td>
-            <td><Button variant="secondary" onclick={() => void revokeToken(t)}>Revoke</Button></td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead
+          ><tr
+            ><th>Name</th><th>Role</th><th>Expires</th><th>Last used</th><th
+              ><span class="sr-only">Actions</span></th
+            ></tr
+          ></thead
+        >
+        <tbody>
+          {#each tokens as t (t.id)}
+            <tr>
+              <td>{t.name}</td>
+              <td>{t.bindings.map((b) => b.role).join(', ')}</td>
+              <td>{formatTime(t.expires_at)}</td>
+              <td>{t.last_used_at ? formatTime(t.last_used_at) : 'never'}</td>
+              <td
+                ><Button variant="secondary" onclick={() => void revokeToken(t)}>Revoke</Button></td
+              >
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </section>
 
