@@ -44,7 +44,9 @@ test.describe('setup wizard on a fresh server', () => {
     await page.getByRole('button', { name: 'Save and continue' }).click();
 
     await expect(title).toHaveText('Add your first host');
-    await expect(page.locator('pre code').first()).toContainText('--agent --token');
+    // INS-4: the last step shows the install command once a single-use token is created.
+    await page.getByRole('button', { name: 'Create token' }).click();
+    await expect(page.locator('#install-command')).toContainText('--agent --token');
     await expect(page.getByRole('button', { name: 'Copy command' })).toBeVisible();
     await page.getByRole('button', { name: 'Finish setup' }).click();
     await expect(page.locator('#wizard-step-title')).toHaveText('Setup is complete');

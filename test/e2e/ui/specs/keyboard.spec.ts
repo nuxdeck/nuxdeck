@@ -35,7 +35,8 @@ test.describe('keyboard navigation', () => {
     test.skip(!hostId, 'no host is enrolled: the inventory table has no rows (see README.md)');
     await page.goto('/inventory');
     await expect(page.locator('h1#page-title')).toBeVisible();
-    const hostLink = page.locator(`a[href="/inventory/hosts/${hostId}"]`);
+    // Container rows link to their host too, so take the first link in document order.
+    const hostLink = page.locator(`a[href="/inventory/hosts/${hostId}"]`).first();
     await expect(hostLink).toBeVisible();
 
     // Tab from the heading until the host link has focus; the bound keeps a regression finite.

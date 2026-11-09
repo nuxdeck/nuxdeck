@@ -83,7 +83,7 @@ func TestNFR6_BackupRestoresOnFreshDataDir(t *testing.T) {
 		t.Fatalf("start the restored nuxd: %v", err)
 	}
 	caPath := filepath.Join(s.env.StackDir, "restored-ca.pem")
-	if _, err := s.compose(ctx, "--profile", "restore", "cp", "nuxd-restored:/var/lib/nuxd-restored/tls/server.crt", caPath); err != nil {
+	if _, err := s.compose(ctx, "--profile", "restore", "cp", "nuxd-restored:/var/lib/restored/nuxd/tls/server.crt", caPath); err != nil {
 		t.Fatalf("copy the restored certificate: %v", err)
 	}
 

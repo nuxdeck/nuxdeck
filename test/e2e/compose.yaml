@@ -56,10 +56,11 @@ services:
       retries: 30
 
   # Deliberately failing: its healthcheck never passes, and the uptime check and alert scenario
-  # stops and starts it. It serves HTTP 200 while it runs.
+  # stops and starts it. It serves HTTP 200 on 8080 while it runs.
+  # The image is the nginx one already pinned for nginx: alpine's busybox has no httpd applet.
   failing:
-    image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-    command: ["sh", "-c", "mkdir -p /www && echo ok > /www/index.html && exec httpd -f -p 8080 -h /www"]
+    image: nginx:stable-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    command: ["sh", "-c", "sed -i 's/listen  *80;/listen 8080;/' /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
     labels:
       nux.e2e.role: failing
     healthcheck:
@@ -161,9 +162,9 @@ services:
   restore:
     image: nux-e2e-nux:${E2E_PROJECT}
     profiles: ["restore"]
-    command: ["restore", "--in", "/backups/nux-e2e.nuxbak", "--data-dir", "/var/lib/nuxd-restored", "--passphrase-file", "/run/e2e/backup-passphrase"]
+    command: ["restore", "--in", "/backups/nux-e2e.nuxbak", "--data-dir", "/var/lib/restored/nuxd", "--passphrase-file", "/run/e2e/backup-passphrase"]
     volumes:
-      - restored-data:/var/lib/nuxd-restored
+      - restored-data:/var/lib/restored
       - ./.stack/backup:/backups:ro
       - ./.stack/backup-passphrase:/run/e2e/backup-passphrase:ro
     cap_drop: [ALL]
@@ -175,7 +176,7 @@ services:
     profiles: ["restore"]
     hostname: nuxd-restored
     environment:
-      NUXD_DATA_DIR: /var/lib/nuxd-restored
+      NUXD_DATA_DIR: /var/lib/restored/nuxd
       NUXD_HTTPS_ADDR: ":8443"
       NUXD_REDIRECT_ADDR: ":8080"
       NUXD_GATEWAY_ADDR: ":8444"
@@ -183,7 +184,7 @@ services:
     ports:
       - "127.0.0.1:${E2E_RESTORE_PORT}:8443"
     volumes:
-      - restored-data:/var/lib/nuxd-restored
+      - restored-data:/var/lib/restored
 
 volumes:
   nuxd-data:

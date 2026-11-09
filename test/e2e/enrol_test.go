@@ -15,6 +15,9 @@ import (
 // it must not create a third host.
 func TestT1_EnrolmentTokenIsSingleUse(t *testing.T) {
 	s := requireStack(t)
+	if s.tokenB == "" {
+		t.Skip("needs a fresh stack: the enrolment token is only known to the run that bootstrapped it")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

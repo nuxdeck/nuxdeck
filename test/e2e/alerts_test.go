@@ -28,7 +28,9 @@ type alertRow struct {
 type uptimeCheck struct {
 	ID     string `json:"id"`
 	Status struct {
-		LastChecked *time.Time `json:"last_checked"`
+		State         string     `json:"state"`
+		LastChecked   *time.Time `json:"last_checked"`
+		LastErrorCode string     `json:"last_error_code"`
 	} `json:"status"`
 }
 
@@ -50,10 +52,11 @@ func TestM3_StoppedServiceAlertsAndResolves(t *testing.T) {
 		"interval_s": 20, "timeout_s": 5, "retries": 0, "enabled": true, "allow_private": true,
 		"http": map[string]any{"url": "http://" + failingService + ":8080/", "expected_status": []int{200}},
 	})
-	eventually(t, 2*time.Minute, "first successful check run", func() (bool, string, error) {
+	// The scenario is only meaningful if the service is up before it is stopped.
+	eventually(t, 2*time.Minute, "the check to report up", func() (bool, string, error) {
 		var c uptimeCheck
 		err := s.admin.do(ctx, http.MethodGet, "/api/v1/checks/"+checkID, nil, &c)
-		return c.Status.LastChecked != nil, "not checked yet", err
+		return c.Status.State == "up", fmt.Sprintf("state %q, last error %q", c.Status.State, c.Status.LastErrorCode), err
 	})
 
 	ruleName := "e2e check down " + token
@@ -91,6 +94,9 @@ func TestM3_StoppedServiceAlertsAndResolves(t *testing.T) {
 
 	if _, err := s.compose(ctx, "start", failingService); err != nil {
 		t.Fatalf("start %s: %v", failingService, err)
+	}
+	if ps, err := s.compose(ctx, "ps", "-a", failingService); err == nil {
+		t.Logf("after start: %s", ps)
 	}
 	t.Cleanup(func() { s.logCheckState(context.Background(), t, checkID) })
 	startedAt := time.Now()

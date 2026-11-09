@@ -71,23 +71,34 @@ func bootstrap() (*stack, error) {
 	if err := waitForReady(ctx, admin, env.BaseURL); err != nil {
 		return nil, fmt.Errorf("nuxd not ready: %w", err)
 	}
-	if err := createAdmin(ctx, env, admin); err != nil {
-		return nil, err
-	}
-
 	s := &stack{env: env, admin: admin}
-	if _, err := s.enrol(ctx, "agent-a"); err != nil {
-		return nil, err
-	}
-	s.tokenB, err = s.enrolToken(ctx)
+	required, err := s.setupRequired(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.enrolWith(ctx, "agent-b", s.tokenB); err != nil {
-		return nil, err
-	}
-	if _, err := s.compose(ctx, "up", "-d", "agent-a", "agent-b"); err != nil {
-		return nil, err
+	if required {
+		if err := createAdmin(ctx, env, admin); err != nil {
+			return nil, err
+		}
+		if _, err := s.enrol(ctx, "agent-a"); err != nil {
+			return nil, err
+		}
+		s.tokenB, err = s.enrolToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.enrolWith(ctx, "agent-b", s.tokenB); err != nil {
+			return nil, err
+		}
+		if _, err := s.compose(ctx, "up", "-d", "agent-a", "agent-b"); err != nil {
+			return nil, err
+		}
+	} else {
+		// A stack that is already set up (make e2e-up, then go test) keeps its admin and agents.
+		// The single-use token test needs a fresh stack and skips itself here.
+		if err := admin.login(ctx, env.AdminEmail, env.AdminPassword); err != nil {
+			return nil, fmt.Errorf("reuse existing stack: %w", err)
+		}
 	}
 	if err := s.waitHosts(ctx); err != nil {
 		return nil, err
@@ -96,6 +107,17 @@ func bootstrap() (*stack, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// setupRequired reports whether first-run setup has not happened yet on this server.
+func (s *stack) setupRequired(ctx context.Context) (bool, error) {
+	var status struct {
+		SetupRequired bool `json:"setup_required"`
+	}
+	if err := s.admin.do(ctx, http.MethodGet, "/api/v1/setup/status", nil, &status); err != nil {
+		return false, fmt.Errorf("read setup status: %w", err)
+	}
+	return status.SetupRequired, nil
 }
 
 // waitForReady polls the liveness endpoint until nuxd answers or the context ends.

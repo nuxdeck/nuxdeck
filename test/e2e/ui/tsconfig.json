@@ -6,20 +6,9 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": [
-      "ES2022",
-      "DOM"
-    ],
-    "typeRoots": [
-      "../../../web/node_modules/@types"
-    ],
-    "types": [
-      "node"
-    ]
+    "lib": ["ES2022", "DOM"],
+    "typeRoots": ["../../../web/node_modules/@types"],
+    "types": ["node"]
   },
-  "include": [
-    "playwright.config.ts",
-    "specs/**/*.ts",
-    "helpers/**/*.ts"
-  ]
+  "include": ["playwright.config.ts", "specs/**/*.ts", "helpers/**/*.ts"]
 }

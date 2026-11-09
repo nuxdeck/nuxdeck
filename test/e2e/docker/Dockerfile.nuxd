@@ -4,8 +4,8 @@
 # in, so the build needs no network. The release image (deploy/docker) uses distroless and a
 # goreleaser archive; this one uses alpine, which is already present on the build host.
 FROM alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-RUN mkdir -p /var/lib/nuxd /var/lib/nuxd-restored \
- && chown 65532:65532 /var/lib/nuxd /var/lib/nuxd-restored
+RUN mkdir -p /var/lib/nuxd /var/lib/restored \
+ && chown 65532:65532 /var/lib/nuxd /var/lib/restored
 COPY bin/nuxd /usr/local/bin/nuxd
 USER 65532:65532
 WORKDIR /var/lib/nuxd
