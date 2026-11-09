@@ -24,7 +24,7 @@ failed=0
 (cd "$repo_dir" && go test -tags e2e -count=1 -timeout 30m -v ./test/e2e/) || failed=1
 
 if [ -f "$e2e_dir/ui/package.json" ]; then
-	(cd "$e2e_dir/ui" && npm ci && npx playwright test) || failed=1
+	(cd "$e2e_dir/ui" && pnpm install --frozen-lockfile && pnpm exec playwright test) || failed=1
 else
 	echo "e2e: test/e2e/ui/package.json not found; skipping the Playwright suite"
 fi

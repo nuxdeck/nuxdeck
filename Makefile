@@ -1,23 +1,23 @@
 .PHONY: lint test build web vuln licences release-check dev dev-agent proto api api-check e2e e2e-up e2e-down release-snapshot bench load load-full
 
-web/node_modules: web/package-lock.json
-	cd web && npm ci
+web/node_modules: web/pnpm-lock.yaml
+	cd web && pnpm install --frozen-lockfile
 	@touch web/node_modules
 
 lint: web/node_modules
 	golangci-lint run ./...
 	go run github.com/bufbuild/buf/cmd/buf@v1.75.0 lint
-	cd web && npm run lint && npm run check
-	cd test/e2e/ui && npm run lint
+	cd web && pnpm run lint && pnpm run check
+	cd test/e2e/ui && pnpm run lint
 
 test: web/node_modules
 	go test -race ./...
-	cd web && npm test
+	cd web && pnpm test
 	bash deploy/install/install_test.sh
 	bash deploy/release/next-version_test.sh
 
 web: web/node_modules
-	cd web && npm run build
+	cd web && pnpm run build
 
 build: web
 	go build -trimpath -o bin/ ./cmd/nuxd ./cmd/nux
@@ -33,7 +33,7 @@ dev: web/node_modules
 	@mkdir -p .dev-data
 	@trap 'kill 0' INT TERM EXIT; \
 	  NUXD_DATA_DIR="$(CURDIR)/.dev-data" NUXD_HTTPS_ADDR=127.0.0.1:8443 NUXD_REDIRECT_ADDR=127.0.0.1:8080 go run ./cmd/nuxd & \
-	  (cd web && npm run dev) & \
+	  (cd web && pnpm run dev) & \
 	  wait
 
 dev-agent:
@@ -55,9 +55,9 @@ SPDX_TAG := SPDX-License-Identifier
 api: web/node_modules
 	go run $(OAPI_CODEGEN) --config api/oapi-codegen.yaml $(API_SPEC)
 	@tmp=$$(mktemp) && { printf '// %s: Apache-2.0\n\n' $(SPDX_TAG); cat $(API_GO_OUT); } > "$$tmp" && mv "$$tmp" $(API_GO_OUT) && chmod 644 $(API_GO_OUT)
-	cd web && npx --no-install openapi-typescript ../$(API_SPEC) --output src/lib/api/schema.d.ts
+	cd web && pnpm exec openapi-typescript ../$(API_SPEC) --output src/lib/api/schema.d.ts
 	@tmp=$$(mktemp) && { printf '// %s: AGPL-3.0-only\n\n' $(SPDX_TAG); cat $(API_TS_OUT); } > "$$tmp" && mv "$$tmp" $(API_TS_OUT) && chmod 644 $(API_TS_OUT)
-	cd web && npx --no-install prettier --write src/lib/api/schema.d.ts >/dev/null
+	cd web && pnpm exec prettier --write src/lib/api/schema.d.ts >/dev/null
 
 api-check:
 	snapshot=$$(mktemp -d) && cp $(API_GO_OUT) $(API_TS_OUT) "$$snapshot"/ && \
