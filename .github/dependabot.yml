@@ -22,7 +22,9 @@ updates:
     commit-message:
       prefix: chore(deps)
   - package-ecosystem: npm
-    directory: /web
+    directories:
+      - /web
+      - /test/e2e/ui
     target-branch: staging
     schedule:
       interval: weekly

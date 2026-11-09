@@ -4,11 +4,11 @@
 
 Three kinds of automated check exist. Each item below names the one that proves it.
 
-- **Unit (jsdom), `npx vitest run`:** axe on every route and key state (`src/a11y.routes.test.ts`,
+- **Unit (jsdom), `pnpm exec vitest run`:** axe on every route and key state (`src/a11y.routes.test.ts`,
   `src/a11y.states.test.ts`, `src/a11y.test.ts`), token contrast and motion tokens
   (`src/lib/ui/tokens.test.ts`). jsdom does not lay out pages, so it cannot see focus rings on
   real pixels, reflow, zoom or target sizes.
-- **Browser, `npm run test` in `test/e2e/ui` (Playwright, Chromium):** axe on real rendered pages in
+- **Browser, `pnpm run test` in `test/e2e/ui` (Playwright, Chromium):** axe on real rendered pages in
   light and dark themes (`specs/a11y.spec.ts`), and focus, layout, zoom, motion and target checks
   (`specs/layout.spec.ts`), keyboard paths (`specs/keyboard.spec.ts`), the command palette
   (`specs/palette.spec.ts`), the log viewer (`specs/logs.spec.ts`), the Add a host screen

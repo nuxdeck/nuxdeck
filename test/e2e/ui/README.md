@@ -5,7 +5,7 @@ Apache-2.0. This package is separate from `web/`, so the app's dependencies stay
 
 ## Run
 
-`make e2e` runs `npm ci && npx playwright test` here with the stack's variables. To run by hand
+`make e2e` runs `pnpm install --frozen-lockfile && pnpm exec playwright test` here with the stack's variables. To run by hand
 against a server that is already running:
 
 | Variable             | Use                                                                             |
@@ -20,7 +20,7 @@ The run needs at least one enrolled host for the item page, palette search, keyb
 specs. Without one those specs skip and say so. `setup.spec.ts` skips unless the server reports
 `setup_required: true`.
 
-Run `npm run typecheck` and `npm run lint` before committing. They reuse the TypeScript, ESLint and
+Run `pnpm run typecheck` and `pnpm run lint` before committing. They reuse the TypeScript, ESLint and
 Prettier installed in `web/`, so they need no install here.
 
 ## Layout
