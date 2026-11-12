@@ -16,15 +16,15 @@ Nux Deck v0.1 ("See it") is deliberately small. This page lists the limits you w
 
 ## Known gaps in v0.1 build
 
-| Requirement                                                   | What the build does                                                                                                                                        |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T3: alert when one agent identity connects from two addresses | Not implemented. Agent certificates are valid for 24 hours and can be revoked, but no two-address alert is raised.                                         |
-| T4: session binding                                           | Not implemented. Sessions are bound to the cookie only; IP and user agent are recorded but do not invalidate a session. Idle and absolute expiry do apply. |
-| T13: per-agent rate limits on agent messages                  | Not implemented. The only gateway rate limit is on enrolment attempts (`GW-RATE-001`). Message size caps and the concurrent log-stream limit do apply.     |
-| ALR-7: grouping of flapping alerts                            | Partly implemented. The number of re-openings in 30 minutes is reported as `flap_count` in notifications. Alerts are not grouped or suppressed.            |
-| STP-4: custom logo, colours and CNAME per status page         | Not implemented in this build. Status pages have a title, description, components and incidents only.                                                      |
-| AUD-4: forwarding audit events to syslog or a webhook         | Not implemented. Use the export and verify endpoints, and back up the database.                                                                            |
-| Audit hash chain verified on export                           | The chain is verified at startup, on restore and by `GET /api/v1/audit/verify`. The export itself is not verified.                                         |
+| Requirement                                                   | What the build does                                                                                                                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T3: alert when one agent identity connects from two addresses | Partly implemented. A second address writes an `agent.identity.dual_address` audit entry and a warning log, but raises no alert. Certificates last 24 hours and can be revoked. |
+| T4: session binding                                           | Not implemented. Sessions are bound to the cookie only; IP and user agent are recorded but do not invalidate a session. Idle and absolute expiry do apply.                      |
+| T13: per-agent rate limits on agent messages                  | Implemented. Each agent stream has a token bucket (50 messages a second, burst 500). Excess messages are dropped, and a persistent flood closes the stream with `GW-STR-005`.   |
+| ALR-7: grouping of flapping alerts                            | Partly implemented. The number of re-openings in 30 minutes is reported as `flap_count` in notifications. Alerts are not grouped or suppressed.                                 |
+| STP-4: custom logo, colours and CNAME per status page         | Not implemented in this build. Status pages have a title, description, components and incidents only.                                                                           |
+| AUD-4: forwarding audit events to syslog or a webhook         | Not implemented. Use the export and verify endpoints, and back up the database.                                                                                                 |
+| Audit hash chain verified on export                           | The chain is verified at startup, on restore and by `GET /api/v1/audit/verify`. The export itself is not verified.                                                              |
 
 ## Other limits
 
@@ -37,6 +37,8 @@ Nux Deck v0.1 ("See it") is deliberately small. This page lists the limits you w
 - **`nuxd audit` subcommand.** Not present. Use the API for on-demand verification.
 - **Telemetry endpoint.** Fixed in the build; there is no configuration key to change it.
 - **Container actions.** None. Nux Deck does not run commands in containers or on hosts.
-- **Developer targets.** `make dev-agent` and `make e2e` are placeholders in this build.
+- **Developer targets.** `make dev-agent` is a placeholder in this build. `make e2e` runs the end-to-end suite on Docker.
+- **Sockguard filtering.** Sockguard drops environment variables and mount sources, but container command lines, entrypoints, health-check output and some host paths in container details still pass to the server. Keep secrets out of container commands.
+- **Audit chain.** The hash chain has no key and no external anchor, so someone who can write to the database file can rewrite it consistently.
 - **Enrolment.** `nux agent enroll` takes its gateway address from the token; there is no `--server` flag.
 - **Backups.** No scheduling or off-box copy; run `nuxd backup` from cron while nuxd is stopped.

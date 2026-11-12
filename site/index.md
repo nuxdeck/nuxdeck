@@ -22,9 +22,9 @@ Agents connect outbound to the server over mutual TLS, so hosts do not need inbo
 
 ## Start here
 
-1. [Install the server](install.md).
-2. [Enrol your first host](agents.md).
-3. [Set up checks and alerts](checks.md) and [alerts](alerts.md).
+1. [Deploy to production](deployment.md): the whole path in one page.
+2. Or the individual steps: [install the server](install.md) and [enrol your first host](agents.md).
+3. [Set up checks](checks.md) and [alerts](alerts.md).
 
 ## Reference
 
