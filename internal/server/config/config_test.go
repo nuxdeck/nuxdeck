@@ -96,3 +96,53 @@ func TestLoadErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretsKeyFile(t *testing.T) {
+	cfg, err := Load("", false, env(map[string]string{"NUXD_MASTER_KEY_FILE": "/run/secrets/nuxd.key"}))
+	if err != nil || cfg.Secrets.MasterKeyFile != "/run/secrets/nuxd.key" {
+		t.Fatalf("got %+v, %v", cfg.Secrets, err)
+	}
+	if _, err := Load("", false, env(map[string]string{"NUXD_MASTER_KEY_FILE": "relative.key"})); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("relative key path accepted: %v", err)
+	}
+}
+
+func TestUPT_ChecksSettings(t *testing.T) {
+	cfg, err := Load("", false, env(nil))
+	if err != nil || cfg.Checks.BlockPrivate || cfg.Checks.MaxConcurrent != 0 {
+		t.Fatalf("defaults = %+v, %v", cfg.Checks, err)
+	}
+	cfg, err = Load(writeFile(t, "checks:\n  block_private: false\n  max_concurrent: 8\n"), true, env(map[string]string{"NUXD_CHECKS_BLOCK_PRIVATE": "true"}))
+	if err != nil || !cfg.Checks.BlockPrivate || cfg.Checks.MaxConcurrent != 8 {
+		t.Fatalf("got %+v, %v", cfg.Checks, err)
+	}
+	if _, err := Load("", false, env(map[string]string{"NUXD_CHECKS_BLOCK_PRIVATE": "maybe"})); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("bad bool accepted: %v", err)
+	}
+	if _, err := Load(writeFile(t, "checks:\n  max_concurrent: -1\n"), true, env(nil)); errcode.CodeOf(err) != errcode.SRVCfg002 {
+		t.Errorf("negative concurrency accepted: %v", err)
+	}
+}
+
+func TestTrustedProxy_ConfigLoad(t *testing.T) {
+	cfg, err := Load("", false, env(map[string]string{"NUXD_TRUSTED_PROXIES": "10.0.0.0/8, 2001:db8::/32"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Server.TrustedProxies) != 2 {
+		t.Fatalf("trusted proxies = %v", cfg.Server.TrustedProxies)
+	}
+	nets, err := ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil || len(nets) != 2 {
+		t.Fatalf("parse: %v %v", nets, err)
+	}
+
+	for _, bad := range []string{"10.0.0.1", "not-a-range", "10.0.0.0/33"} {
+		if _, err := Load("", false, env(map[string]string{"NUXD_TRUSTED_PROXIES": bad})); err == nil {
+			t.Errorf("NUXD_TRUSTED_PROXIES=%q must be refused at load", bad)
+		}
+	}
+	if cfg, err := Load("", false, env(nil)); err != nil || len(cfg.Server.TrustedProxies) != 0 {
+		t.Errorf("default must trust no proxy: %v %v", cfg.Server.TrustedProxies, err)
+	}
+}

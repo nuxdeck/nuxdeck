@@ -29,9 +29,18 @@ const (
 	touchInterval          = time.Minute
 	maxFailuresPerWindow   = 10
 	failureWindow          = 5 * time.Minute
-	maxNameRunes           = 100
-	maxEmailLen            = 254
-	maxUserAgentLen        = 256
+	maxAccountFailures     = 5
+	accountLockWindow      = 15 * time.Minute
+	// Per account, whatever the address: well above maxFailuresPerWindow so that
+	// honest typing mistakes from one address rarely trip it, and capped back-off
+	// so a lock always ends on its own (see accountGuard).
+	accountFailureThreshold = 25
+	accountBackoffBase      = time.Minute
+	accountBackoffCeiling   = 15 * time.Minute
+	accountIdleReset        = time.Hour
+	maxNameRunes            = 100
+	maxEmailLen             = 254
+	maxUserAgentLen         = 256
 )
 
 // FieldError ties a validation failure to the request field it concerns.
@@ -56,13 +65,19 @@ type Config struct {
 	// IdleTimeout (default 12 hours, ACC-6) and AbsoluteTimeout (default 7 days) bound a session.
 	IdleTimeout     time.Duration
 	AbsoluteTimeout time.Duration
+	// Accounts enables two-factor, API tokens and user management; nil means password-only sign-in.
+	Accounts *Accounts
 }
 
 // Service implements first-run setup, sign-in, sign-out and session lookup.
 type Service struct {
-	cfg       Config
-	limiter   *Limiter
-	dummyHash string
+	cfg     Config
+	limiter *Limiter
+	lockout *Limiter // per account and address (ACC-7)
+	// accountGuard counts failures per account across all addresses (ACC-7).
+	accountGuard *accountGuard
+	tickets      *ticketStore
+	dummyHash    string
 }
 
 // SignedIn is the result of a successful setup or sign-in.
@@ -73,6 +88,8 @@ type SignedIn struct {
 	ExpiresAt time.Time
 	User      User
 	Roles     []Role
+	// Pending is set instead of a session when a second factor is still needed.
+	Pending *PendingLogin
 }
 
 // SetupRequest creates the first administrator.
@@ -105,7 +122,18 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{cfg: cfg, limiter: NewLimiter(maxFailuresPerWindow, failureWindow, cfg.Now), dummyHash: dummy}, nil
+	s := &Service{
+		cfg: cfg, limiter: NewLimiter(maxFailuresPerWindow, failureWindow, cfg.Now), dummyHash: dummy,
+		lockout: NewLimiter(maxAccountFailures, accountLockWindow, cfg.Now), tickets: newTicketStore(cfg.Now),
+		accountGuard: newAccountGuard(accountFailureThreshold, accountBackoffBase, accountBackoffCeiling, accountIdleReset, cfg.Now),
+	}
+	if cfg.Accounts != nil {
+		cfg.Accounts.afterPasswordReset = func(email, userID string) {
+			s.accountGuard.Reset(email)
+			s.accountGuard.Reset("totp:" + userID)
+		}
+	}
+	return s, nil
 }
 
 // SetupRequired reports whether no account exists yet.
@@ -180,6 +208,11 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 		return nil, errcode.New(errcode.AuthDeny002, "sign-in attempts from %s are rate limited", c.IP)
 	}
 	normalized, emailErr := normalizeEmail(email)
+	lockKey := normalized + "|" + c.IP
+	if emailErr == nil && (s.lockout.Blocked(lockKey) || s.accountGuard.Blocked(normalized)) {
+		s.equalizeTiming(ctx, password)
+		return nil, errcode.New(errcode.AuthLock001, "account locked for this address")
+	}
 	if emailErr != nil || len(password) > maxPasswordBytes {
 		s.recordFailure(ctx, c, "auth.login_failed", "malformed_credentials", normalized)
 		return nil, errcode.New(errcode.AuthDeny001, "credentials rejected")
@@ -210,9 +243,18 @@ func (s *Service) Login(ctx context.Context, email, password string, c Client) (
 	case !match:
 		s.recordFailure(ctx, c, "auth.login_failed", "bad_password", normalized)
 	default:
-		return s.startSession(ctx, user, c, "password")
+		s.accountGuard.Reset(normalized)
+		return s.pendingLogin(ctx, user, c)
 	}
 	return nil, errcode.New(errcode.AuthDeny001, "credentials rejected")
+}
+
+// equalizeTiming spends the same hashing time a failed sign-in does, so a
+// locked account answers no faster than a wrong password.
+func (s *Service) equalizeTiming(ctx context.Context, password string) {
+	if len(password) <= maxPasswordBytes {
+		_, _ = s.cfg.Hasher.Verify(ctx, password, s.dummyHash)
+	}
 }
 
 // Authenticate resolves a session cookie. An absent, unknown or expired cookie
@@ -247,11 +289,11 @@ func (s *Service) Authenticate(ctx context.Context, cookie string) (Principal, *
 			sess.LastSeenAt = now
 		}
 	}
-	roles, err := s.cfg.Repo.Roles(ctx, user.ID)
+	bindings, err := s.cfg.Repo.Bindings(ctx, user.ID)
 	if err != nil {
-		return Principal{}, nil, fmt.Errorf("look up roles: %w", err)
+		return Principal{}, nil, fmt.Errorf("look up role bindings: %w", err)
 	}
-	return Principal{UserID: user.ID, Email: user.Email, Name: user.Name, Roles: roles}, &sess, nil
+	return Principal{UserID: user.ID, Email: user.Email, Name: user.Name, Roles: UnscopedRoles(bindings), Bindings: bindings, Via: "session"}, &sess, nil
 }
 
 // Logout ends the session.
@@ -287,17 +329,28 @@ func (s *Service) startSession(ctx context.Context, user User, c Client, method 
 	}); err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
-	roles, err := s.cfg.Repo.Roles(ctx, user.ID)
+	bindings, err := s.cfg.Repo.Bindings(ctx, user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("look up roles: %w", err)
+		return nil, fmt.Errorf("look up role bindings: %w", err)
 	}
-	return &SignedIn{Cookie: cookie, CSRFToken: csrf, ExpiresAt: sess.ExpiresAt, User: user, Roles: roles}, nil
+	return &SignedIn{Cookie: cookie, CSRFToken: csrf, ExpiresAt: sess.ExpiresAt, User: user, Roles: UnscopedRoles(bindings)}, nil
 }
 
 // recordFailure counts the failure against the caller's address and writes an
 // audit entry. A failure to audit is logged, not returned: the caller must still be refused.
 func (s *Service) recordFailure(ctx context.Context, c Client, action, reason, email string) {
 	s.limiter.Fail(c.IP)
+	if email != "" {
+		key := email + "|" + c.IP
+		s.lockout.Fail(key)
+		if s.lockout.Blocked(key) {
+			defer s.auditFail(ctx, "", c, "auth.locked", "login_failures")
+		}
+		s.accountGuard.Fail(email)
+		if s.accountGuard.Blocked(email) {
+			defer s.auditFail(ctx, "", c, "auth.locked", "account_failures")
+		}
+	}
 	details := map[string]any{"reason": reason}
 	if email != "" {
 		details["email"] = maskEmail(email)

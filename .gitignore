@@ -13,3 +13,10 @@ CLAUDE.md
 .env.*
 *.key
 *.pem
+/nuxd
+/nux
+/load
+/test/e2e/.stack/
+
+# Local agent identity (private key), enrolment token and sockguard socket from manual testing.
+/nux-local/

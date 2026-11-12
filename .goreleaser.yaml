@@ -4,8 +4,8 @@ project_name: nuxdeck
 # The server embeds the built UI.
 before:
   hooks:
-    - npm ci --prefix web
-    - npm run build --prefix web
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web run build
 
 builds:
   - id: nuxd
@@ -47,6 +47,11 @@ archives:
     files:
       - src: cmd/nux/LICENSE
         dst: LICENSE
+      # Signed with the archive; the install script's --agent mode reads them from the verified tarball.
+      - src: deploy/systemd/nux-agent.service
+        dst: nux-agent.service
+      - src: deploy/systemd/nux-sockguard.service
+        dst: nux-sockguard.service
 
 checksum:
   name_template: checksums.txt

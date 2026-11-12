@@ -47,7 +47,7 @@
     <p id="{id}-hint" class="hint">{hint}</p>
   {/if}
   {#if error}
-    <p id="{id}-error" class="error">{error}</p>
+    <p id="{id}-error" class="error" role="alert">{error}</p>
   {/if}
 </div>
 

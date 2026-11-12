@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -50,8 +51,8 @@ func TestAdminSessionLifecycle(t *testing.T) {
 	if err != nil || u.ID != "u1" || u.Name != "Ada" || u.Disabled || u.PasswordHash != "$argon2id$x" {
 		t.Fatalf("user = %+v, %v", u, err)
 	}
-	if roles, err := s.Roles(ctx, "u1"); err != nil || len(roles) != 1 || roles[0] != auth.RoleAdmin {
-		t.Errorf("roles = %v, %v; want [admin]", roles, err)
+	if bs, err := s.Bindings(ctx, "u1"); err != nil || len(bs) != 1 || bs[0].Role != auth.RoleAdmin || !bs[0].Scope.IsZero() {
+		t.Errorf("bindings = %v, %v; want [admin]", bs, err)
 	}
 	if _, err := s.UserByEmail(ctx, "nobody@example.com"); !errors.Is(err, auth.ErrNotFound) {
 		t.Errorf("unknown user error = %v, want ErrNotFound", err)
@@ -194,5 +195,77 @@ func TestEmailsAreUniqueAndLowercase(t *testing.T) {
 	s := openStore(t)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO users (id, email, name, disabled, created_at) VALUES ('x', 'Mixed@Example.com', 'n', 0, 1)`); err == nil {
 		t.Error("the database must reject a mixed-case email")
+	}
+}
+
+func TestACC5_BindingsCarryScopeAndGroups(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.CreateAdmin(ctx, admin("u1", "ada@example.com"), ev("setup.admin_created")); err != nil {
+		t.Fatal(err)
+	}
+	s.Groups = func(context.Context, string) ([]string, error) { return []string{"sre"}, nil }
+	for i, row := range [][3]string{
+		{"user", "u1", `{"environments":["staging"]}`}, // a second binding for the same user
+		{"oidc_group", "sre", `{"tag_sets":[["team:web"]]}`},
+		{"oidc_group", "other", `{}`},              // a group the user is not in
+		{"user", "u1", `{"environments":`},         // unreadable: grants nothing
+		{"user", "u1", `null`},                     // would decode to unscoped: refused
+		{"user", "someone-else", `{}`},             // another user's binding
+		{"oidc_group", "sre", `{"tag_sets":[[]]}`}, // invalid
+	} {
+		if _, err := s.DB().ExecContext(ctx, `INSERT INTO role_bindings (id, subject_type, subject, role, scope_json) VALUES (?, ?, ?, 'viewer', ?)`,
+			"b"+strconv.Itoa(i), row[0], row[1], row[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Bindings(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var viewers []auth.Binding
+	for _, b := range got {
+		if b.Role == auth.RoleViewer {
+			viewers = append(viewers, b)
+		}
+	}
+	if len(got) != 3 || len(viewers) != 2 || viewers[0].Scope.Environments[0] != "staging" || viewers[1].Scope.TagSets[0][0] != "team:web" {
+		t.Errorf("bindings = %+v", got)
+	}
+
+	s.Groups = nil
+	if got, _ := s.Bindings(ctx, "u1"); len(got) != 2 {
+		t.Errorf("without group data got %d bindings, want the 2 direct readable ones", len(got))
+	}
+}
+
+func TestACC4_LastUnscopedAdminBindingCannotBeDeleted(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.CreateAdmin(ctx, admin("u1", "ada@example.com"), ev("setup.admin_created")); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListRoleBindings(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %v, %v", list, err)
+	}
+	if err := s.DeleteRoleBinding(ctx, list[0].ID, ev("rolebinding.delete")); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("delete last admin = %v, want ErrLastAdmin", err)
+	}
+	extra, err := s.CreateRoleBinding(ctx, auth.StoredBinding{SubjectType: "oidc_group", Subject: "ops", Role: auth.RoleAdmin}, ev("rolebinding.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteRoleBinding(ctx, list[0].ID, ev("rolebinding.delete")); err != nil {
+		t.Errorf("delete with another admin present = %v", err)
+	}
+	if err := s.DeleteRoleBinding(ctx, extra.ID, ev("rolebinding.delete")); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("delete the new last admin = %v", err)
+	}
+	if err := s.DeleteRoleBinding(ctx, "missing", ev("rolebinding.delete")); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("delete missing = %v", err)
+	}
+	if _, err := s.CreateRoleBinding(ctx, auth.StoredBinding{SubjectType: "user", Subject: "ghost", Role: auth.RoleViewer}, ev("rolebinding.create")); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("binding for an unknown user = %v", err)
 	}
 }

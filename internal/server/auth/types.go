@@ -55,7 +55,10 @@ type Session struct {
 type Repository interface {
 	UserCount(ctx context.Context) (int, error)
 	UserByEmail(ctx context.Context, email string) (User, error)
-	Roles(ctx context.Context, userID string) ([]Role, error)
+	// Bindings returns every role binding that applies to the user: those bound to the user directly
+	// and those bound to an OIDC group the user currently belongs to. A binding whose scope cannot
+	// be read is left out, so it grants nothing.
+	Bindings(ctx context.Context, userID string) ([]Binding, error)
 	// CreateAdmin inserts the first account with the admin role, or returns ErrSetupDone.
 	CreateAdmin(ctx context.Context, u User, ev audit.Event) error
 	CreateSession(ctx context.Context, s Session, ev audit.Event) error

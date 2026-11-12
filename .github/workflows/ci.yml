@@ -50,17 +50,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: web/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.node-version
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
-      - run: npm audit --audit-level=high
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run check
+      - run: pnpm test
+      - run: pnpm run build
+      - run: pnpm audit --audit-level=high
 
   lint:
     name: lint
@@ -143,4 +146,62 @@ jobs:
           comment-summary-in-pr: never
           allow-licenses: >-
             Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, 0BSD, Zlib,
-            Unlicense, AGPL-3.0-only, AGPL-3.0-or-later
+            Unlicense, AGPL-3.0-only, AGPL-3.0-or-later,
+            LicenseRef-scancode-google-patent-license-golang
+
+  bench:
+    name: bench
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # NFR-1 collector budget and server ingest benchmark; no -race, because the budgets measure CPU.
+      - run: make bench
+
+  load-smoke:
+    name: load-smoke
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # Smoke scale: 20 simulated agents, 100 checks, 30 s. The full NFR-2/NFR-4 run is manual (make load-full).
+      - run: make load
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+      # Compose stack of nuxd, two agents with sockguard, nginx and a failing service, then the
+      # Go scenarios and the Playwright suite when it exists. The stack is torn down on every exit.
+      - run: make e2e

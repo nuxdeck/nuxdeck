@@ -15,17 +15,17 @@ There is no CLA and no sign-off requirement. By contributing you agree your work
 
 Every pull request must pass these jobs (`.github/workflows/ci.yml`) before it can merge:
 
-| Job                 | Checks                                                                                             |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| `build-test`        | `go build`, `go vet`, `go test -race` (includes the licence-boundary test)                         |
-| `web`               | UI: ESLint, Prettier, `svelte-check`, Vitest with axe, production build and CSP check, `npm audit` |
-| `lint`              | golangci-lint: staticcheck, gosec, errcheck, revive, gofumpt                                       |
-| `govulncheck`       | Known vulnerabilities in dependencies and the standard library (`make vuln`)                       |
-| `semgrep`           | Semgrep static analysis                                                                            |
-| `licences`          | `reuse lint` and the dependency licence allowlist (`make licences`)                                |
-| `dependency-review` | New dependencies: high-severity advisories and disallowed licences                                 |
-| `release-gate`      | Snapshot release build and Trivy scan of both images (critical and high fail)                      |
-| `reproducible`      | Two builds of the same commit produce identical binaries                                           |
+| Job                 | Checks                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `build-test`        | `go build`, `go vet`, `go test -race` (includes the licence-boundary test)                          |
+| `web`               | UI: ESLint, Prettier, `svelte-check`, Vitest with axe, production build and CSP check, `pnpm audit` |
+| `lint`              | golangci-lint: staticcheck, gosec, errcheck, revive, gofumpt                                        |
+| `govulncheck`       | Known vulnerabilities in dependencies and the standard library (`make vuln`)                        |
+| `semgrep`           | Semgrep static analysis                                                                             |
+| `licences`          | `reuse lint` and the dependency licence allowlist (`make licences`)                                 |
+| `dependency-review` | New dependencies: high-severity advisories and disallowed licences                                  |
+| `release-gate`      | Snapshot release build and Trivy scan of both images (critical and high fail)                       |
+| `reproducible`      | Two builds of the same commit produce identical binaries                                            |
 
 Branch flow: open pull requests against `staging`. Pull requests into `staging` and `main`, and pushes to `staging`, also run `release-gate` (GoReleaser snapshot build and Trivy scan of the images) and `reproducible` (two builds, identical hashes). `main` changes only by a pull request from `staging` approved by a code owner (`.github/CODEOWNERS`); each merge to `main` publishes the next `v0.1.0-alpha.N` release (ADR-015).
 

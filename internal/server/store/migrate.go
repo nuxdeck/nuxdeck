@@ -58,6 +58,13 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 }
 
 func migrate(ctx context.Context, db *sql.DB, fsys fs.FS, log *slog.Logger) error {
+	return migrateHooked(ctx, db, fsys, log, nil)
+}
+
+// migrateHooked is migrate with an optional hook that runs once, before the first pending
+// migration, when the database already has migrations applied. A failing hook stops the
+// migrations, so an upgrade never runs without the backup the hook takes.
+func migrateHooked(ctx context.Context, db *sql.DB, fsys fs.FS, log *slog.Logger, beforeUpgrade BeforeUpgrade) error {
 	migrations, err := loadMigrations(fsys)
 	if err != nil {
 		return err
@@ -85,10 +92,20 @@ func migrate(ctx context.Context, db *sql.DB, fsys fs.FS, log *slog.Logger) erro
 		}
 	}
 
+	var pending []migration
 	for _, m := range migrations {
-		if _, done := applied[m.version]; done {
-			continue
+		if _, done := applied[m.version]; !done {
+			pending = append(pending, m)
 		}
+	}
+	if beforeUpgrade != nil && len(applied) > 0 && len(pending) > 0 {
+		from := len(applied)
+		if err := beforeUpgrade(ctx, db, from, pending[len(pending)-1].version); err != nil {
+			return err
+		}
+	}
+
+	for _, m := range pending {
 		if err := apply(ctx, db, m); err != nil {
 			return err
 		}

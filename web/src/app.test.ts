@@ -112,3 +112,17 @@ describe('appearance', () => {
     expect(window.localStorage.getItem('nux.density')).toBe('compact');
   });
 });
+
+describe('in-page links', () => {
+  it('leaves the skip link to the browser so focus moves into main, not to a route change', async () => {
+    await renderShell();
+    const navigate = vi.spyOn(router, 'navigate');
+    const skip = screen.getByRole('link', { name: 'Skip to main content' });
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    skip.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/');
+  });
+});

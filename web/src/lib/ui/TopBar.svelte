@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { auth } from '../auth.svelte';
+  import { palette } from '../palette.svelte';
   import { appearance } from '../theme.svelte';
   import Icon from './Icon.svelte';
 
@@ -30,8 +31,20 @@
   </button>
   <a class="brand" href="/">Nux Deck</a>
   <span class="spacer"></span>
+  <button
+    type="button"
+    class="text-button search"
+    aria-haspopup="dialog"
+    onclick={() => palette.open()}
+  >
+    <Icon name="search" size={16} />
+    Search
+    <kbd>Ctrl K</kbd>
+  </button>
   {#if auth.user}
-    <span class="user">{auth.user.name}</span>
+    {#if auth.user.roles.includes('admin')}<a class="text-button" href="/settings/users">Users</a
+      >{/if}
+    <a class="user" href="/account">{auth.user.name}</a>
     <button type="button" class="text-button" onclick={() => void auth.logout()}>Sign out</button>
   {/if}
   <button
@@ -53,12 +66,14 @@
 </header>
 
 <style>
+  /* The bar grows and wraps instead of widening the page on narrow screens (WCAG 1.4.10). */
   .topbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-    height: var(--topbar-height);
-    padding: 0 var(--space-3);
+    min-height: var(--topbar-height);
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
   }
@@ -75,11 +90,15 @@
   }
 
   .user {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--target-size);
     color: var(--color-text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 16ch;
+    text-decoration: none;
   }
 
   .text-button {
@@ -91,8 +110,30 @@
     cursor: pointer;
   }
 
+  a.text-button {
+    display: inline-flex;
+    align-items: center;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
   .text-button:hover {
     background: var(--color-surface-sunken);
+  }
+
+  .search {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  kbd {
+    padding: 0 var(--space-1);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-1);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
   }
 
   .icon-button {
@@ -110,5 +151,12 @@
   .icon-button:hover {
     background: var(--color-surface-sunken);
     border-color: var(--color-border);
+  }
+
+  @media (max-width: 40rem) {
+    .spacer,
+    kbd {
+      display: none;
+    }
   }
 </style>
